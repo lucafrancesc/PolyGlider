@@ -17,3 +17,13 @@ __pycache__/
 *.pyc
 .venv/
 env/
+
+
+# --- IDE Ignore Rules ---
+.idea/
+.vs/
+.vscode/
+
+# --- .NET (C#) Ignore Rules ---
+**/bin/
+**/obj/
