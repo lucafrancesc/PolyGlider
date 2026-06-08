@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  message-broker:
+    image: rabbitmq:3-management-alpine
+    container_name: polyglider_broker
+    ports:
+      - "5672:5672"   # AMQP protocol port (What our services use to send/receive messages)
+      - "15672:15672" # Management UI port (The web dashboard we can look at)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+
+volumes:
+  rabbitmq_data:

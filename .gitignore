@@ -1,0 +1,19 @@
+# --- .NET (C#) Ignore Rules ---
+**/bin/
+**/obj/
+.vs/
+.vscode/
+
+# --- Scala / SBT Ignore Rules ---
+**/target/
+.bsp/
+.metals/
+.ammonite/
+project/project/
+project/target/
+
+# --- Python Ignore Rules ---
+__pycache__/
+*.pyc
+.venv/
+env/
