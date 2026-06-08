@@ -101,4 +101,72 @@ services:
 volumes:
   rabbitmq_data:
 
+---
+
+**Getting Started**
+
+- **Prerequisites:** Docker & Docker Compose, .NET 9 SDK (for gateway), Scala 3 + sbt (for processing engine), Python 3.11+ (for analytics worker).
+- **Quick start (local broker):** from the repository root run:
+
+```bash
+docker-compose up -d
+```
+
+This starts RabbitMQ (management UI on http://localhost:15672, AMQP at `amqp://localhost:5672`).
+
+**Repository Layout**
+
+- `gateway-api-cs/` — C# ingestion gateway (ASP.NET Core)
+- `processing-engine-scala/` — Scala core processing engine
+- `analytics-worker-python/` — Python analytics worker
+
+**Run Locally**
+
+1. Start local infrastructure:
+
+```bash
+docker-compose up -d
+```
+
+2. Run the gateway (C#):
+
+```bash
+cd gateway-api-cs
+dotnet run --project gateway-api-cs.csproj
+```
+
+3. Run the Scala processing engine (example):
+
+```bash
+cd processing-engine-scala
+sbt run
+```
+
+4. Run the Python analytics worker (example):
+
+```bash
+cd analytics-worker-python
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python worker.py
+```
+
+**Example Request**
+
+Send a sample `OrderPlaced` to the gateway:
+
+```bash
+curl -X POST http://localhost:5000/api/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"eventId":"11111111-1111-4111-8111-111111111111","sku":"ABC123","quantity":1,"customerId":"22222222-2222-4222-8222-222222222222","timestamp":"2026-06-08T12:00:00Z"}'
+```
+
+**Development & Contributing**
+
+- Add component-specific build/run instructions in the subfolder READMEs.
+- Open a pull request with a clear description and a short verification checklist (build & smoke-test steps).
+
+If you want, I can create starter `README.md` files inside each component folder with exact build and run commands (C#, Scala, Python). Which components should I scaffold first?
+
 ```

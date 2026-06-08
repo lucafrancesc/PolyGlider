@@ -1,0 +1,51 @@
+# Processing Engine (Scala 3)
+
+This module contains the core deterministic processing engine implemented in Scala 3 using Cats Effect and FS2.
+
+## Prerequisites
+
+- Java 17+ (or the JDK version targeted by your `build.sbt`)
+- sbt (recommended) or a compatible build tool
+- Docker & Docker Compose (for local RabbitMQ)
+
+## Build
+
+From the `processing-engine-scala` directory:
+
+```bash
+sbt compile
+```
+
+## Run (development)
+
+1. Start the message broker if not already running:
+
+```bash
+docker-compose up -d
+```
+
+2. Run the processing engine via sbt:
+
+```bash
+cd processing-engine-scala
+sbt run
+```
+
+By default the app will read broker connection settings from environment variables or the application config (implementations vary). If the project uses `application.conf`, set `RABBITMQ_HOST` and `RABBITMQ_PORT` accordingly.
+
+## Testing
+
+Run unit tests with:
+
+```bash
+sbt test
+```
+
+## Development notes
+
+- Project layout: place source under `src/main/scala` and tests under `src/test/scala`.
+- Use Cats Effect `IOApp` as the application entry point to make local execution and testing straightforward.
+- Use `fs2.Stream` with a bounded queue or back-pressure-aware consumer to process events from RabbitMQ.
+- Consider adding `docker-compose.override.yml` for developer convenience to set service names or ports.
+
+If you want, I can scaffold a minimal `build.sbt`, an `IOApp` starter, and an `application.conf` example. Should I create those starter files? 
