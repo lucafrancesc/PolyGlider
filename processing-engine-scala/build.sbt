@@ -1,5 +1,5 @@
-thisBuild / scalaVersion := "3.3.3" // Stable Long-Term Support version for Scala 3
-thisBuild / version      := "0.1.0-SNAPSHOT"
+ThisBuild / scalaVersion := "3.3.3" // Fixed: Capital 'T'
+ThisBuild / version      := "0.1.0-SNAPSHOT" // Fixed: Capital 'T'
 
 lazy val root = (project in file("."))
   .settings(
@@ -18,3 +18,9 @@ lazy val root = (project in file("."))
       "io.circe" %% "circe-parser"  % "0.14.6"
     )
   )
+
+// Test framework
+libraryDependencies ++= Seq(
+  "org.scalameta" %% "munit" % "0.7.29" % Test,
+  "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test
+)

@@ -152,6 +152,48 @@ pip install -r requirements.txt
 python worker.py
 ```
 
+**Run the apps and tests**
+
+- Start infrastructure:
+
+```bash
+docker-compose up -d
+```
+
+- Run the gateway (C#):
+
+```bash
+cd gateway-api-cs
+dotnet run --project gateway-api-cs.csproj
+```
+
+- Run the Scala processing engine:
+
+```bash
+cd processing-engine-scala
+sbt run
+```
+
+- Run the Python worker:
+
+```bash
+cd analytics-worker-python
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python worker.py
+```
+
+- Run tests:
+
+```bash
+# Scala tests
+cd processing-engine-scala && sbt test
+
+# C# gateway tests
+dotnet test gateway-api-cs/Tests/gateway-api-cs.Tests.csproj
+```
+
 **Example Request**
 
 Send a sample `OrderPlaced` to the gateway:

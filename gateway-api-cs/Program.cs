@@ -14,8 +14,8 @@ var factory = new ConnectionFactory
 };
 
 // 2. Open a persistent connection to the broker
-await using var connection = await factory.CreateConnectionAsync();
-await using var channel = await connection.CreateChannelAsync();
+using var connection = await factory.CreateConnectionAsync();
+using var channel = await connection.CreateChannelAsync();
 
 // 3. Declare the exchange we will publish events to
 const string exchangeName = "orders.exchange";
@@ -62,4 +62,4 @@ app.Run();
 public record OrderRequest(string Sku, int Quantity, Guid CustomerId);
 
 // The canonical event schema shared across our polyglot services
-internal record OrderPlacedEvent(Guid EventId, string Sku, int Quantity, Guid CustomerId, DateTime Timestamp);
+public record OrderPlacedEvent(Guid EventId, string Sku, int Quantity, Guid CustomerId, DateTime Timestamp);
