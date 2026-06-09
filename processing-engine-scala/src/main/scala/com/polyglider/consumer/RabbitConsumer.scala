@@ -33,7 +33,7 @@ object RabbitConsumer {
         val conn = factory.newConnection()
         val ch = conn.createChannel()
 
-        ch.exchangeDeclare("orders.exchange", "direct", true)
+        ch.exchangeDeclare("orders.exchange", "topic", true)
         ch.queueDeclare("orders.placed", true, false, false, null)
         ch.queueBind("orders.placed", "orders.exchange", "orders.placed")
         ch.basicQos(1)

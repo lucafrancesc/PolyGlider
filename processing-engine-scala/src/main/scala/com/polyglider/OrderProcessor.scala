@@ -3,6 +3,7 @@ package com.polyglider
 import cats.effect.*
 import com.polyglider.consumer.RabbitConsumer
 import com.polyglider.db.Database
+import com.typesafe.config.ConfigFactory
 import com.polyglider.model.OrderPlaced
 import io.circe.generic.auto.*
 import io.circe.parser
@@ -15,12 +16,20 @@ import scala.concurrent.duration.*
 object OrderProcessor {
   given Logger[IO] = Slf4jLogger.getLoggerFromName[IO]("OrderProcessor")
 
+  private val conf = ConfigFactory.load()
+
   def process: IO[Unit] =
     // Build a combined Resource: transactor -> run migrations -> consumer resource
     val res: Resource[IO, Unit] = for {
       xa <- Database.transactorResource
-      _ <- Resource.eval(Database.runMigrations())
-      _ <- Resource.eval(Logger[IO].info("Flyway migrations executed"))
+      // Conditionally run migrations based on config flag `app.db.runMigrations` (default true)
+      runMigs = try conf.getConfig("app.db").getBoolean("runMigrations") catch {
+        case _: Exception => true
+      }
+      _ <- Resource.eval(
+        if runMigs then Database.runMigrations() *> Logger[IO].info("Flyway migrations executed")
+        else Logger[IO].info("Skipping Flyway migrations (app.db.runMigrations=false)")
+      )
       _ <- RabbitConsumer.start(xa, Logger[IO])
     } yield ()
 
