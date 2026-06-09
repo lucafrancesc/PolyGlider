@@ -41,6 +41,10 @@ Run unit tests with:
 sbt test
 ```
 
+Notes:
+- Unit tests use an in-memory H2 datasource for fast execution.
+- Integration tests use Testcontainers (Docker required). Run the full test-suite with `sbt test` and ensure Docker is available.
+
 ## Development notes
 
 - Project layout: place source under `src/main/scala` and tests under `src/test/scala`.
