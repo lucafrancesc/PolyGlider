@@ -1,10 +1,11 @@
 package com.polyglider.consumer
 
 import cats.effect.*
-import cats.effect.unsafe.implicits.global
+import cats.effect.std.Queue
+import cats.syntax.all.*
 import org.typelevel.log4cats.Logger
 import io.circe.generic.auto._
-import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP}
+import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
 import doobie.Transactor
 import com.polyglider.model.OrderPlaced
 import com.polyglider.db.Database
@@ -12,42 +13,57 @@ import com.polyglider.db.Database
 import java.nio.charset.StandardCharsets
 
 object RabbitConsumer {
-  def start(xa: Transactor[IO], logger: Logger[IO]): IO[Unit] = IO.blocking {
-    val host = sys.env.getOrElse("RABBIT_HOST", "127.0.0.1")
-    val port = sys.env.getOrElse("RABBIT_PORT", "5672").toInt
-    val user = sys.env.getOrElse("RABBIT_USER", "guest")
-    val pass = sys.env.getOrElse("RABBIT_PASS", "guest")
+  private case class Delivery(channel: Channel, deliveryTag: Long, body: Array[Byte])
 
-    val factory = new ConnectionFactory()
-    factory.setHost(host)
-    factory.setPort(port)
-    factory.setUsername(user)
-    factory.setPassword(pass)
+  def start(xa: Transactor[IO], logger: Logger[IO], workerCount: Int = 4): Resource[IO, Unit] =
+    for {
+      queue <- Resource.eval(Queue.bounded[IO, Delivery](1000))
+      connRes <- Resource.make(IO.blocking {
+        val host = sys.env.getOrElse("RABBIT_HOST", "127.0.0.1")
+        val port = sys.env.getOrElse("RABBIT_PORT", "5672").toInt
+        val user = sys.env.getOrElse("RABBIT_USER", "guest")
+        val pass = sys.env.getOrElse("RABBIT_PASS", "guest")
 
-    val conn = factory.newConnection()
-    val ch = conn.createChannel()
+        val factory = new ConnectionFactory()
+        factory.setHost(host)
+        factory.setPort(port)
+        factory.setUsername(user)
+        factory.setPassword(pass)
 
-    ch.exchangeDeclare("orders.exchange", "direct", true)
-    ch.queueDeclare("orders.placed", true, false, false, null)
-    ch.queueBind("orders.placed", "orders.exchange", "orders.placed")
-    ch.basicQos(1)
+        val conn = factory.newConnection()
+        val ch = conn.createChannel()
 
-    val consumer = new DefaultConsumer(ch) {
-      override def handleDelivery(consumerTag: String, envelope: Envelope, properties: AMQP.BasicProperties, body: Array[Byte]): Unit = {
-        val deliveryTag = envelope.getDeliveryTag
-        val task = for {
-          order <- IO.fromEither(_root_.io.circe.parser.parse(new String(body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
-          _ <- Database.upsertSku(xa, order.sku, order.quantity)
-          _ <- IO.blocking(ch.basicAck(deliveryTag, false))
-        } yield ()
+        ch.exchangeDeclare("orders.exchange", "direct", true)
+        ch.queueDeclare("orders.placed", true, false, false, null)
+        ch.queueBind("orders.placed", "orders.exchange", "orders.placed")
+        ch.basicQos(1)
 
-        task.handleErrorWith { err =>
-          logger.error(err)("Failed processing message") *> IO.blocking(ch.basicNack(deliveryTag, false, false))
-        }.unsafeRunAndForget()
-      }
-    }
+        val consumer = new DefaultConsumer(ch) {
+          override def handleDelivery(consumerTag: String, envelope: Envelope, properties: AMQP.BasicProperties, body: Array[Byte]): Unit = {
+            val d = Delivery(ch, envelope.getDeliveryTag, body)
+            val _ = queue.tryOffer(d)
+            ()
+          }
+        }
 
-    ch.basicConsume("orders.placed", false, consumer)
-    ()
-  }
+        ch.basicConsume("orders.placed", false, consumer)
+        (conn, ch)
+      })( { case (conn, ch) => IO.blocking(ch.close()) *> IO.blocking(conn.close()) })
+
+      fibers <- Resource.make(
+        List.fill(workerCount)(
+          queue.take.flatMap { d =>
+            val task = for {
+              order <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
+              _ <- Database.upsertSku(xa, order.sku, order.quantity)
+              _ <- IO.blocking(d.channel.basicAck(d.deliveryTag, false))
+            } yield ()
+
+            task.handleErrorWith { err =>
+              logger.error(err)("Failed processing message") *> IO.blocking(d.channel.basicNack(d.deliveryTag, false, false))
+            }
+          }.foreverM.start
+        ).sequence
+      )(fs => fs.traverse_(_.cancel))
+    } yield ()
 }
