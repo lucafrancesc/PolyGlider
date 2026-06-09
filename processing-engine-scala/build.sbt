@@ -5,20 +5,24 @@ lazy val root = (project in file("."))
   .settings(
     name := "processing-engine-scala",
     libraryDependencies ++= Seq(
+      // Core libraries
       "org.typelevel" %% "cats-effect" % "3.7.0",
       "co.fs2" %% "fs2-core" % "3.13.0",
+
+      // RabbitMQ integration
       "dev.profunktor" %% "fs2-rabbit" % "5.5.2",
       "dev.profunktor" %% "fs2-rabbit-circe" % "5.5.2",
 
+      // JSON (Circe)
       "io.circe" %% "circe-core" % "0.14.15",
       "io.circe" %% "circe-generic" % "0.14.15",
       "io.circe" %% "circe-parser" % "0.14.15",
 
-      // Logger runtime backend
+      // Logging
       "ch.qos.logback" % "logback-classic" % "1.5.34",
-      "org.typelevel" %% "log4cats-slf4j"   % "2.8.0",
+      "org.typelevel" %% "log4cats-slf4j" % "2.8.0",
 
-      // Test frameworks
+      // Testing
       "org.scalameta" %% "munit" % "1.3.3" % Test,
       "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test
     )
@@ -26,8 +30,8 @@ lazy val root = (project in file("."))
 
   // Database dependencies for Postgres ledger
   libraryDependencies ++= Seq(
+    "org.postgresql" % "postgresql" % "42.6.0",
     "org.tpolecat" %% "doobie-core" % "1.0.0-RC2",
-    "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC2",
     "org.tpolecat" %% "doobie-hikari" % "1.0.0-RC2",
-    "org.postgresql" % "postgresql" % "42.6.0"
+    "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC2"
   )
