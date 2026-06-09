@@ -5,8 +5,8 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: polyglider_broker
     ports:
-      - "5672:5672"   # AMQP protocol port (What our services use to send/receive messages)
-      - "15672:15672" # Management UI port (The web dashboard we can look at)
+      - "5672:5672"   # AMQP protocol port
+      - "15672:15672" # Management UI dashboard
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     environment:
@@ -14,16 +14,17 @@ services:
       - RABBITMQ_DEFAULT_PASS=guest
 
   postgres:
-    image: postgres:15-alpine
-    container_name: polyglider_postgres
+    image: postgres:16-alpine
+    container_name: polyglider_db
+    ports:
+      - "5432:5432"   # Standard PostgreSQL port
     environment:
-      - POSTGRES_DB=polyglider
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-    ports:
-      - "5432:5432"
+      - POSTGRES_DB=polyglider_inventory
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
 volumes:
   rabbitmq_data:
+  postgres_data:
