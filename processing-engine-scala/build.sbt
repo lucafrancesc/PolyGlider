@@ -22,16 +22,17 @@ lazy val root = (project in file("."))
       "ch.qos.logback" % "logback-classic" % "1.5.34",
       "org.typelevel" %% "log4cats-slf4j" % "2.8.0",
 
+      // Database dependencies for Postgres ledger
+      "org.postgresql" % "postgresql" % "42.7.7",
+      "org.tpolecat" %% "doobie-core" % "1.0.0-RC12",
+      "org.tpolecat" %% "doobie-hikari" % "1.0.0-RC12",
+      "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC12",
+
+      // Flyway for DB migrations
+      "org.flywaydb" % "flyway-core" % "12.8.1",
+
       // Testing
       "org.scalameta" %% "munit" % "1.3.3" % Test,
       "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test
     )
-  )
-
-  // Database dependencies for Postgres ledger
-  libraryDependencies ++= Seq(
-    "org.postgresql" % "postgresql" % "42.6.0",
-    "org.tpolecat" %% "doobie-core" % "1.0.0-RC2",
-    "org.tpolecat" %% "doobie-hikari" % "1.0.0-RC2",
-    "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC2"
   )

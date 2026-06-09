@@ -59,12 +59,17 @@ object OrderProcessor extends IOApp.Simple {
   } yield xa
 
   def initDb(xa: Transactor[IO]): IO[Unit] =
-    sql"""
-      CREATE TABLE IF NOT EXISTS ledger (
-        sku TEXT PRIMARY KEY,
-        qty BIGINT NOT NULL
-      )
-    """.update.run.transact(xa).void
+    // With Flyway migrations present we prefer running Flyway instead of ad-hoc DDL.
+    IO.unit
+
+  def runMigrations(): IO[Unit] = IO.blocking {
+    val url = sys.env.getOrElse("PG_URL", "jdbc:postgresql://localhost:5432/polyglider")
+    val user = sys.env.getOrElse("PG_USER", "postgres")
+    val password = sys.env.getOrElse("PG_PASSWORD", "postgres")
+    val flyway = org.flywaydb.core.Flyway.configure().dataSource(url, user, password).load()
+    flyway.migrate()
+    ()
+  }
 
   def upsertSku(xa: Transactor[IO], sku: String, delta: Int): IO[Unit] =
     sql"""
@@ -95,8 +100,8 @@ object OrderProcessor extends IOApp.Simple {
 
       _ <- transactorResource.use { xa =>
         for {
-          _ <- initDb(xa)
-          _ <- logger.info("Database initialized for ledger")
+              _ <- runMigrations()
+              _ <- logger.info("Flyway migrations executed")
 
           _ <- rabbit.createConnectionChannel.use { implicit ch =>
         for {
