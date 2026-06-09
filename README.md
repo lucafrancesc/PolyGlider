@@ -195,6 +195,10 @@ cd processing-engine-scala && sbt test
 dotnet test gateway-api-cs/Tests/gateway-api-cs.Tests.csproj
 ```
 
+Notes:
+- The Scala processing engine uses Postgres in production but unit tests use H2. For full integration tests we use Testcontainers (requires Docker).
+- If you add integration tests that use Testcontainers, run `sbt test` with Docker available on the host.
+
 **Example Request**
 
 Send a sample `OrderPlaced` to the gateway:
