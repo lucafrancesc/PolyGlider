@@ -48,4 +48,31 @@ sbt test
 - Use `fs2.Stream` with a bounded queue or back-pressure-aware consumer to process events from RabbitMQ.
 - Consider adding `docker-compose.override.yml` for developer convenience to set service names or ports.
 
-If you want, I can scaffold a minimal `build.sbt`, an `IOApp` starter, and an `application.conf` example. Should I create those starter files? 
+## Local DB migrations
+
+The processor uses Flyway migrations bundled in `src/main/resources/db/migration/`.
+
+Start local infrastructure (RabbitMQ + Postgres):
+
+```bash
+# from repository root
+docker-compose up -d
+```
+
+Run the processing engine (it runs Flyway on startup):
+
+```bash
+cd processing-engine-scala
+sbt run
+```
+
+If you prefer to run migrations manually before starting the app, set the DB env vars and run the app which will execute Flyway on startup as well:
+
+```bash
+export PG_URL=jdbc:postgresql://localhost:5432/polyglider
+export PG_USER=postgres
+export PG_PASSWORD=postgres
+sbt run
+```
+
+If you want, I can scaffold a minimal `build.sbt`, an `IOApp` starter, and an `application.conf` example. Should I create those starter files?

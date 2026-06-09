@@ -13,5 +13,17 @@ services:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
 
+  postgres:
+    image: postgres:15-alpine
+    container_name: polyglider_postgres
+    environment:
+      - POSTGRES_DB=polyglider
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
 volumes:
   rabbitmq_data:
