@@ -24,6 +24,7 @@ lazy val root = (project in file("."))
 
       // Database dependencies for Postgres ledger
       "org.postgresql" % "postgresql" % "42.7.7",
+      "com.h2database" % "h2" % "2.2.220" % Test,
       "org.tpolecat" %% "doobie-core" % "1.0.0-RC12",
       "org.tpolecat" %% "doobie-hikari" % "1.0.0-RC12",
       "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC12",
@@ -36,6 +37,10 @@ lazy val root = (project in file("."))
 
       // Testing
       "org.scalameta" %% "munit" % "1.3.3" % Test,
-      "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test
+      "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test,
+      "org.testcontainers" % "testcontainers" % "1.19.0" % Test,
+      "com.dimafeng" %% "testcontainers-scala-scalatest" % "0.40.11" % Test,
+      "com.dimafeng" %% "testcontainers-scala-postgresql" % "0.40.11" % Test,
+      "com.dimafeng" %% "testcontainers-scala-rabbitmq" % "0.40.11" % Test
     )
   )

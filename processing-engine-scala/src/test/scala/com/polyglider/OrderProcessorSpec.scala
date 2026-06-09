@@ -28,10 +28,9 @@ class OrderProcessorSpec extends CatsEffectSuite {
 
   test("withRetries should fail after exhausted retries") {
     val action = IO.raiseError[Int](new RuntimeException("permanent"))
-    recoverToExceptionIf[RuntimeException] {
-      OrderProcessor.withRetries(action, retries = 2, delay = 10.millis)
-    }.map { ex =>
-      assert(ex.getMessage.contains("permanent"))
+    OrderProcessor.withRetries(action, retries = 2, delay = 10.millis).attempt.map {
+      case Left(ex) => assert(ex.getMessage.contains("permanent"))
+      case Right(_) => fail("expected failure")
     }
   }
 }
