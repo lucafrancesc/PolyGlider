@@ -7,21 +7,25 @@ import doobie.implicits.*
 import org.flywaydb.core.Flyway
 
 object Database {
+  import com.typesafe.config.ConfigFactory
+
+  private val conf = ConfigFactory.load().getConfig("app.db")
+
   def transactorResource: Resource[IO, HikariTransactor[IO]] = for {
     ec <- ExecutionContexts.fixedThreadPool[IO](32)
     xa <- HikariTransactor.newHikariTransactor[IO](
       "org.postgresql.Driver",
-      sys.env.getOrElse("PG_URL", "jdbc:postgresql://localhost:5432/polyglider"),
-      sys.env.getOrElse("PG_USER", "postgres"),
-      sys.env.getOrElse("PG_PASSWORD", "postgres"),
+      conf.getString("url"),
+      conf.getString("user"),
+      conf.getString("password"),
       ec
     )
   } yield xa
 
   def runMigrations(): IO[Unit] = IO.blocking {
-    val url = sys.env.getOrElse("PG_URL", "jdbc:postgresql://localhost:5432/polyglider")
-    val user = sys.env.getOrElse("PG_USER", "postgres")
-    val password = sys.env.getOrElse("PG_PASSWORD", "postgres")
+    val url = conf.getString("url")
+    val user = conf.getString("user")
+    val password = conf.getString("password")
     val flyway = Flyway.configure().dataSource(url, user, password).load()
     flyway.migrate()
     ()

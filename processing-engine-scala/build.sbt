@@ -31,6 +31,9 @@ lazy val root = (project in file("."))
       // Flyway for DB migrations
       "org.flywaydb" % "flyway-core" % "12.8.1",
 
+      // Typesafe config
+      "com.typesafe" % "config" % "1.4.2",
+
       // Testing
       "org.scalameta" %% "munit" % "1.3.3" % Test,
       "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test
