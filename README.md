@@ -119,6 +119,7 @@ This starts RabbitMQ (management UI on http://localhost:15672, AMQP at `amqp://l
 - `gateway-api-cs/` — C# ingestion gateway (ASP.NET Core)
 - `processing-engine-scala/` — Scala core processing engine
 - `analytics-worker-python/` — Python analytics worker
+ - `tools/load-tester/` — Locust-based load tester and helpers
 
 **Run Locally**
 

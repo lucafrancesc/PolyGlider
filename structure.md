@@ -10,6 +10,9 @@ polyglider/                  <-- Your Git Repository Root
 │   ├── build.sbt
 │   └── src/main/scala/
 │
-└── analytics-worker-py/     # Python Analytics Service
-    ├── main.py
-    └── requirements.txt
+├── analytics-worker-py/     # Python Analytics Service
+│   ├── main.py
+│   └── requirements.txt
+│
+└── tools/                   # Development & testing tools
+    └── load-tester/        # Locust load tester (locustfile.py, README, requirements)
