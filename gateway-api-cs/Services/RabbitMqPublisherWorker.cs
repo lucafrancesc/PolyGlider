@@ -52,6 +52,7 @@ public class RabbitMqPublisherWorker(
         {
             var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(orderEvent, CamelCase));
             await rabbitChannel.BasicPublishAsync(ExchangeName, RoutingKey, body, ct);
+            logger.LogInformation("Published to RabbitMQ: eventId={EventId} sku={Sku} qty={Quantity}", orderEvent.EventId, orderEvent.Sku, orderEvent.Quantity);
         }
     }
 }
