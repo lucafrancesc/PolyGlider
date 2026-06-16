@@ -11,7 +11,13 @@ namespace gateway_api_cs_tests;
 [Trait("Category", "Integration")]
 public class RabbitMqIntegrationTests : IAsyncLifetime
 {
-    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder().Build();
+    private const string RabbitUser = "guest";
+    private const string RabbitPass = "guest";
+
+    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder()
+        .WithUsername(RabbitUser)
+        .WithPassword(RabbitPass)
+        .Build();
 
     public Task InitializeAsync() => _rabbitMq.StartAsync();
     public Task DisposeAsync() => _rabbitMq.DisposeAsync().AsTask();
@@ -24,8 +30,8 @@ public class RabbitMqIntegrationTests : IAsyncLifetime
             {
                 builder.UseSetting("RabbitMQ:Host", _rabbitMq.Hostname);
                 builder.UseSetting("RabbitMQ:Port", _rabbitMq.GetMappedPublicPort(5672).ToString());
-                builder.UseSetting("RabbitMQ:User", "guest");
-                builder.UseSetting("RabbitMQ:Password", "guest");
+                builder.UseSetting("RabbitMQ:User", RabbitUser);
+                builder.UseSetting("RabbitMQ:Password", RabbitPass);
             });
 
         var client = factory.CreateClient();
@@ -38,6 +44,8 @@ public class RabbitMqIntegrationTests : IAsyncLifetime
         {
             HostName = _rabbitMq.Hostname,
             Port = _rabbitMq.GetMappedPublicPort(5672),
+            UserName = RabbitUser,
+            Password = RabbitPass,
         };
         await using var conn = await connFactory.CreateConnectionAsync();
         await using var ch = await conn.CreateChannelAsync();
