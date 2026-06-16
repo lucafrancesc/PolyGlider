@@ -4,6 +4,7 @@ ThisBuild / version := "0.1.0-SNAPSHOT"
 lazy val root = (project in file("."))
   .settings(
     name := "processing-engine-scala",
+    Compile / run / fork := true,
     libraryDependencies ++= Seq(
       // Core libraries
       "org.typelevel" %% "cats-effect" % "3.7.0",
