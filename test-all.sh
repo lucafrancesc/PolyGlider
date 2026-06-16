@@ -3,8 +3,11 @@
 # Integration tests require Docker (Testcontainers spins up RabbitMQ automatically).
 #
 # Usage:
-#   ./test-all.sh            # unit + integration
-#   ./test-all.sh --no-integration   # unit tests only (no Docker required)
+#   ./test-all.sh                  # unit + contract + integration
+#   ./test-all.sh --no-integration # unit + contract tests only (no Docker required)
+#
+# Contract test ordering: Scala runs first and generates
+# contracts/pacts/scala-engine-cs-gateway.json; the C# contract step reads it.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -31,12 +34,20 @@ run_suite() {
   fi
 }
 
-run_suite "Scala unit tests" \
+# Step 1: Scala — unit tests + generates contracts/pacts/scala-engine-cs-gateway.json
+run_suite "Scala unit + contract consumer tests" \
   bash -c "cd '$REPO_ROOT/processing-engine-scala' && sbt test"
 
+# Step 2: C# contract tests — must follow Scala so the pact file exists
+run_suite "C# contract tests" \
+  dotnet test "$REPO_ROOT/gateway-api-cs-tests/gateway-api-cs-tests.csproj" \
+    --filter "Category=Contract" \
+    --logger "console;verbosity=normal"
+
+# Step 3: C# unit tests (excludes contract + integration to avoid double-running)
 run_suite "C# gateway unit tests" \
   dotnet test "$REPO_ROOT/gateway-api-cs-tests/gateway-api-cs-tests.csproj" \
-    --filter "Category!=Integration" \
+    --filter "Category!=Integration&Category!=Contract" \
     --logger "console;verbosity=normal"
 
 if $RUN_INTEGRATION; then
