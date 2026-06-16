@@ -117,6 +117,18 @@ The gateway generates `eventId` and `timestamp`; clients only send the three fie
 
 ---
 
+## Accessing infrastructure
+
+**RabbitMQ management UI** — http://localhost:15672 (credentials: `guest` / `guest`)
+
+**Postgres**
+```bash
+psql -h localhost -p 5432 -U postgres -d polyglider_inventory
+# password: postgres
+```
+
+---
+
 ## Resiliency
 
 | Risk | Mitigation |
