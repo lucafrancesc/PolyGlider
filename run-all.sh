@@ -15,13 +15,15 @@ die()     { echo -e "${RED}[run-all] ERROR:${RESET} $*" >&2; exit 1; }
 
 # ── cleanup on exit ────────────────────────────────────────────────────────────
 PIDS=()
+_CLEANUP_DONE=false
 cleanup() {
+  $_CLEANUP_DONE && return
+  _CLEANUP_DONE=true
   echo ""
   log "Shutting down..."
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
-  wait 2>/dev/null || true
   log "All services stopped."
 }
 trap cleanup INT TERM EXIT
