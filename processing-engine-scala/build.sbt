@@ -29,8 +29,9 @@ lazy val root = (project in file("."))
       "org.tpolecat" %% "doobie-hikari" % "1.0.0-RC12",
       "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC12",
 
-      // Flyway for DB migrations
+      // Flyway for DB migrations (flyway-database-postgresql required separately since Flyway 10)
       "org.flywaydb" % "flyway-core" % "12.8.1",
+      "org.flywaydb" % "flyway-database-postgresql" % "12.8.1",
 
       // Typesafe config
       "com.typesafe" % "config" % "1.4.2",
