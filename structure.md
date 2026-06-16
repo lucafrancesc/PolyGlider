@@ -1,18 +1,29 @@
-polyglider/                  <-- Your Git Repository Root
-├── docker-compose.yml       # Shared infrastructure (RabbitMQ / Databases)
-├── README.md                # System Architecture Documentation
+polyglider/                  <-- Git repository root
+├── docker-compose.yml       # Shared infrastructure (RabbitMQ + Postgres)
+├── README.md                # System architecture and getting started
+├── structure.md             # This file
 │
-├── gateway-api-cs/          # C# .NET Ingestion Service
+├── gateway-api-cs/          # C# .NET ingestion service (implemented)
 │   ├── Program.cs
-│   └── gateway-api-cs.csproj
+│   ├── gateway-api-cs.csproj
+│   └── README.md
 │
-├── processing-engine-scala/ # Scala 3 Processing Service
+├── processing-engine-scala/ # Scala 3 processing service (implemented)
 │   ├── build.sbt
-│   └── src/main/scala/
+│   ├── src/main/scala/
+│   ├── src/main/resources/  # application.conf, Flyway migrations
+│   └── README.md
 │
-├── analytics-worker-py/     # Python Analytics Service
+├── analytics-worker-python/ # Python analytics service (implemented)
 │   ├── main.py
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── Dockerfile
 │
-└── tools/                   # Development & testing tools
-    └── load-tester/        # Locust load tester (locustfile.py, README, requirements)
+├── run-all.sh               # Start all services (--analytics flag for Python worker)
+├── test-all.sh              # Run all test suites (--no-integration for unit-only)
+│
+└── tools/
+    └── load-tester/         # Locust load tester (implemented)
+        ├── locustfile.py
+        ├── requirements.txt
+        └── README.md

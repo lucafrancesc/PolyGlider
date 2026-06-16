@@ -1,12 +1,12 @@
 # Processing Engine (Scala 3)
 
-This module contains the core deterministic processing engine implemented in Scala 3 using Cats Effect and FS2.
+This module contains the core deterministic processing engine implemented in Scala 3 using Cats Effect, Doobie, and Flyway.
 
 ## Prerequisites
 
 - Java 17+ (or the JDK version targeted by your `build.sbt`)
 - sbt (recommended) or a compatible build tool
-- Docker & Docker Compose (for local RabbitMQ)
+- Docker & Docker Compose (for local RabbitMQ and Postgres)
 
 ## Build
 
@@ -18,20 +18,34 @@ sbt compile
 
 ## Run (development)
 
-1. Start the message broker if not already running:
+1. Start local infrastructure if not already running:
 
 ```bash
 docker-compose up -d
 ```
 
-2. Run the processing engine via sbt:
+2. Configure Postgres for ledger persistence (optional but recommended):
+
+The bundled `application.conf` defaults to `jdbc:postgresql://localhost:5432/polyglider` with `app.db.runMigrations = false`. Docker Compose creates database **`polyglider_inventory`**. To persist ledger data locally, either:
+
+- Create a `polyglider` database in Postgres and set `app.db.runMigrations = true` in `application.conf`, or
+- Change `app.db.url` to `jdbc:postgresql://localhost:5432/polyglider_inventory` and set `runMigrations = true`.
+
+3. Run the processing engine:
 
 ```bash
 cd processing-engine-scala
 sbt run
 ```
 
-By default the app will read broker connection settings from environment variables or the application config (implementations vary). If the project uses `application.conf`, set `RABBITMQ_HOST` and `RABBITMQ_PORT` accordingly.
+## Broker configuration
+
+RabbitMQ connection settings are read from **environment variables** in `RabbitConsumer` (not from `application.conf`):
+
+- `RABBIT_HOST` (default: `127.0.0.1`)
+- `RABBIT_PORT` (default: `5672`)
+- `RABBIT_USER` (default: `guest`)
+- `RABBIT_PASS` (default: `guest`)
 
 ## Testing
 
@@ -42,41 +56,25 @@ sbt test
 ```
 
 Notes:
+
 - Unit tests use an in-memory H2 datasource for fast execution.
-- Integration tests use Testcontainers (Docker required). Run the full test-suite with `sbt test` and ensure Docker is available.
+- Testcontainers integration tests are **planned** (dependencies are declared in `build.sbt`, but no integration tests exist yet).
 
 ## Development notes
 
-- Project layout: place source under `src/main/scala` and tests under `src/test/scala`.
-- Use Cats Effect `IOApp` as the application entry point to make local execution and testing straightforward.
-- Use `fs2.Stream` with a bounded queue or back-pressure-aware consumer to process events from RabbitMQ.
-- Consider adding `docker-compose.override.yml` for developer convenience to set service names or ports.
+- Project layout: source under `src/main/scala`, tests under `src/test/scala`.
+- Entry point: Cats Effect `IOApp` in `Main.scala`.
+- Consumer: Java RabbitMQ client with a Cats Effect bounded queue and worker fibers (FS2 is on the classpath but not used by the consumer yet).
+- Flyway migrations: `src/main/resources/db/migration/`.
 
 ## Local DB migrations
 
-The processor uses Flyway migrations bundled in `src/main/resources/db/migration/`.
-
-Start local infrastructure (RabbitMQ + Postgres):
+Flyway migrations run at startup when `app.db.runMigrations = true` in `application.conf`.
 
 ```bash
 # from repository root
 docker-compose up -d
-```
 
-Run the processing engine (it runs Flyway on startup):
-
-```bash
 cd processing-engine-scala
 sbt run
 ```
-
-If you prefer to run migrations manually before starting the app, set the DB env vars and run the app which will execute Flyway on startup as well:
-
-```bash
-export PG_URL=jdbc:postgresql://localhost:5432/polyglider
-export PG_USER=postgres
-export PG_PASSWORD=postgres
-sbt run
-```
-
-If you want, I can scaffold a minimal `build.sbt`, an `IOApp` starter, and an `application.conf` example. Should I create those starter files?
