@@ -11,6 +11,7 @@ on:
     paths:
       - "processing-engine-scala/**"
       - "contracts/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
