@@ -9,6 +9,7 @@ on:
     branches: [ "main" ]
     paths:
       - "tools/mcp-server/**"
+  workflow_dispatch:
 
 permissions:
   contents: read

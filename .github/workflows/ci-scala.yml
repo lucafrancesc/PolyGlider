@@ -11,9 +11,10 @@ on:
     paths:
       - "processing-engine-scala/**"
       - "contracts/**"
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -25,9 +26,12 @@ jobs:
       - name: Set up JDK 11
         uses: actions/setup-java@v4
         with:
-          java-version: "11"
+          java-version: "17"
           distribution: "temurin"
           cache: "sbt"
+
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
 
       - name: Run tests
         working-directory: processing-engine-scala
@@ -40,6 +44,7 @@ jobs:
           path: contracts/pacts/scala-engine-cs-gateway.json
 
       - name: Upload dependency graph
+        if: github.event_name != 'workflow_dispatch'
         uses: scalacenter/sbt-dependency-submission@ab086b50c947c9774b70f39fc7f6e20ca2706c91
         with:
           working-directory: processing-engine-scala
