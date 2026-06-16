@@ -6,16 +6,15 @@ import cats.syntax.all.*
 import org.typelevel.log4cats.Logger
 import io.circe.generic.auto._
 import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
-import doobie.Transactor
 import com.polyglider.model.OrderPlaced
-import com.polyglider.db.Database
+import com.polyglider.storage.SkuStorage
 
 import java.nio.charset.StandardCharsets
 
 object RabbitConsumer {
   private case class Delivery(channel: Channel, deliveryTag: Long, body: Array[Byte])
 
-  def start(xa: Transactor[IO], logger: Logger[IO], workerCount: Int = 4): Resource[IO, Unit] =
+  def start(storage: SkuStorage, logger: Logger[IO], workerCount: Int = 4): Resource[IO, Unit] =
     for {
       queue <- Resource.eval(Queue.bounded[IO, Delivery](1000))
       connRes <- Resource.make(IO.blocking {
@@ -60,7 +59,7 @@ object RabbitConsumer {
           queue.take.flatMap { d =>
             val task = for {
               order <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
-              _ <- Database.upsertSku(xa, order.eventId, order.sku, order.quantity)
+              _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
               _ <- IO.blocking(d.channel.basicAck(d.deliveryTag, false))
             } yield ()
 

@@ -3,6 +3,7 @@ package com.polyglider
 import cats.effect.*
 import com.polyglider.consumer.RabbitConsumer
 import com.polyglider.db.Database
+import com.polyglider.storage.DoobieSkuStorage
 import com.typesafe.config.ConfigFactory
 import com.polyglider.model.OrderPlaced
 import io.circe.generic.auto.*
@@ -30,7 +31,7 @@ object OrderProcessor {
         if runMigs then Database.runMigrations() *> Logger[IO].info("Flyway migrations executed")
         else Logger[IO].info("Skipping Flyway migrations (app.db.runMigrations=false)")
       )
-      _ <- RabbitConsumer.start(xa, Logger[IO])
+      _ <- RabbitConsumer.start(new DoobieSkuStorage(xa), Logger[IO])
     } yield ()
 
     // Use the resource and keep the app running
