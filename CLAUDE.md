@@ -55,6 +55,31 @@ locust -f locustfile.py --headless -u 100 -r 10 --run-time 1m --host http://loca
 
 ---
 
+## MCP server (`tools/mcp-server/`)
+
+Exposes inventory state and order placement as MCP tools (stdio transport). The C# gateway has no read endpoints; this server queries Postgres directly.
+
+**Tools:** `list_inventory`, `get_sku_quantity(sku)`, `list_recent_events(limit?)`, `place_order(sku, quantity, customer_id)`
+
+```bash
+cd tools/mcp-server
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Register once with Claude Code:
+```bash
+claude mcp add polyglider-inventory \
+  /absolute/path/to/tools/mcp-server/.venv/bin/python \
+  /absolute/path/to/tools/mcp-server/main.py
+```
+
+Config via env vars (defaults work with `docker-compose up -d`):
+- `POSTGRES_URL` — default `postgresql://postgres:postgres@localhost:5432/polyglider_inventory`
+- `GATEWAY_URL` — default `http://localhost:5187`
+
+---
+
 ## Architecture
 
 The system is a polyglot pub/sub pipeline:
@@ -84,7 +109,8 @@ HTTP client
 
 - `Main.scala` → `OrderProcessor.process` builds a combined `Resource[IO, Unit]`: transactor → conditional Flyway migrations → `RabbitConsumer.start`
 - `RabbitConsumer` — uses raw `com.rabbitmq.client` (not fs2-rabbit, which is a declared but unused dependency); bounded `Queue[IO, Delivery]` (1000) with `workerCount` (default 4) parallel fibers
-- `Database` — Doobie + HikariCP; `upsertSku` does `INSERT … ON CONFLICT … UPDATE` (idempotent)
+- `Database` — Doobie + HikariCP; transactor and Flyway migrations only
+- `storage/DoobieSkuStorage` — implements `SkuStorage` trait; `upsertSku` does `INSERT … ON CONFLICT … UPDATE` in one transaction (idempotent); inject the trait in tests to avoid Docker
 - Flyway migration: `V1__create_ledger.sql` — single table `ledger(sku TEXT PRIMARY KEY, qty BIGINT)`
 - Tests use H2 in-memory with a manual insert-if-not-exists pattern (H2 doesn't support the Postgres `ON CONFLICT` syntax)
 
