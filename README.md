@@ -66,6 +66,24 @@ Press `Ctrl+C` to stop everything. The script waits for RabbitMQ and Postgres to
 
 ---
 
+## Contract tests
+
+Cross-service contracts live in `contracts/`:
+
+| File | What it covers |
+|------|---------------|
+| `contracts/order-api.json` | JSON Schema for `POST /api/orders` request and 202 response |
+| `contracts/pacts/scala-engine-cs-gateway.json` | Pact V3 — RabbitMQ message shape agreed between Scala consumer and C# provider |
+
+Run Scala first (generates the pact file), then C#:
+
+```bash
+cd processing-engine-scala && sbt test
+cd ../gateway-api-cs-tests && dotnet test --filter "Category=Contract"
+```
+
+---
+
 ## Send an order
 
 ```bash

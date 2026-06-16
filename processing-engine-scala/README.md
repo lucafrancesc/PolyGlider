@@ -50,3 +50,5 @@ sbt test
 ```
 
 Unit tests run against H2 in-memory — no Docker required. They cover JSON parsing, retry logic, UUID validation, ledger upserts, and duplicate event rejection.
+
+`sbt test` also runs the **Pact consumer contract test** (`OrderPlacedEventContractSpec`), which defines the expected `OrderPlaced` message shape and writes the pact file to `contracts/pacts/scala-engine-cs-gateway.json`. The C# gateway's provider tests read this file — run `sbt test` first whenever the message schema changes.
