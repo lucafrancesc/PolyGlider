@@ -1,0 +1,77 @@
+{
+  "consumer": {
+    "name": "scala-engine"
+  },
+  "messages": [
+    {
+      "contents": {
+        "customerId": "22222222-2222-4222-8222-222222222222",
+        "eventId": "11111111-1111-4111-8111-111111111111",
+        "quantity": 5,
+        "sku": "SKU-001",
+        "timestamp": "2024-01-15T10:30:00Z"
+      },
+      "description": "an order placed event",
+      "matchingRules": {
+        "body": {
+          "$.customerId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+              }
+            ]
+          },
+          "$.eventId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+              }
+            ]
+          },
+          "$.quantity": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.sku": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.timestamp": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          }
+        }
+      },
+      "metaData": {
+        "contentType": "application/json"
+      }
+    }
+  ],
+  "metadata": {
+    "pact-jvm": {
+      "version": "4.6.14"
+    },
+    "pactSpecification": {
+      "version": "3.0.0"
+    }
+  },
+  "provider": {
+    "name": "cs-gateway"
+  }
+}

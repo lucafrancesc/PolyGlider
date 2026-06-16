@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "order-api.json",
+  "title": "PolyGlider Order API Contract",
+  "$defs": {
+    "OrderRequest": {
+      "type": "object",
+      "required": ["sku", "quantity", "customerId"],
+      "additionalProperties": false,
+      "properties": {
+        "sku": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "customerId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "OrderResponse": {
+      "type": "object",
+      "required": ["message", "eventId"],
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  }
+}

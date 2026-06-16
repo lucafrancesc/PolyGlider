@@ -42,6 +42,9 @@ lazy val root = (project in file("."))
       "org.testcontainers" % "testcontainers" % "1.19.0" % Test,
       "com.dimafeng" %% "testcontainers-scala-scalatest" % "0.40.11" % Test,
       "com.dimafeng" %% "testcontainers-scala-postgresql" % "0.40.11" % Test,
-      "com.dimafeng" %% "testcontainers-scala-rabbitmq" % "0.40.11" % Test
+      "com.dimafeng" %% "testcontainers-scala-rabbitmq" % "0.40.11" % Test,
+
+      // Contract testing — Pact JVM consumer DSL (Java artifact, single %)
+      "au.com.dius.pact.consumer" % "junit5" % "4.6.14" % Test
     )
   )
