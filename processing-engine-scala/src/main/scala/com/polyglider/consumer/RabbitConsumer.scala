@@ -34,7 +34,12 @@ object RabbitConsumer {
         val ch = conn.createChannel()
 
         ch.exchangeDeclare("orders.exchange", "topic", true)
-        ch.queueDeclare("orders.placed", true, false, false, null)
+        ch.exchangeDeclare("dlx.orders.exchange", "fanout", true)
+        ch.queueDeclare("dlx.orders.placed", true, false, false, null)
+        ch.queueBind("dlx.orders.placed", "dlx.orders.exchange", "")
+        val queueArgs = new java.util.HashMap[String, AnyRef]()
+        queueArgs.put("x-dead-letter-exchange", "dlx.orders.exchange")
+        ch.queueDeclare("orders.placed", true, false, false, queueArgs)
         ch.queueBind("orders.placed", "orders.exchange", "orders.placed")
         ch.basicQos(1)
 

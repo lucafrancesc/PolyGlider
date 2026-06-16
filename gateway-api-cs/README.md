@@ -30,30 +30,24 @@ cd gateway-api-cs
 dotnet run --project gateway-api-cs.csproj
 ```
 
-By default the app listens on the port configured in `Properties/launchSettings.json` or `appsettings.json`. The sample curl in the repository README targets `http://localhost:5000/api/orders` — change the port if your local launch settings differ.
+By default the app listens on **http://localhost:5187** (see `Properties/launchSettings.json`).
 
 ## Environment Variables
+
+Override broker connection settings via environment variables (double underscore = hierarchy separator):
 
 - `RABBITMQ__HOST` — AMQP host (default: `localhost`)
 - `RABBITMQ__PORT` — AMQP port (default: `5672`)
 - `RABBITMQ__USER` — username (default: `guest`)
 - `RABBITMQ__PASSWORD` — password (default: `guest`)
 
-Set these when running locally if your broker is non-default.
+## Smoke test
 
-## Health & Smoke Test
-
-After startup verify the API is reachable:
-
-```bash
-curl -v http://localhost:5000/health
-```
-
-Or use the example `POST /api/orders` curl from the repository README to exercise end-to-end publishing.
+Exercise end-to-end publishing with the example `POST /api/orders` curl from the [repository README](../README.md#example-request).
 
 ## Development notes
 
-- Configuration: check `appsettings.Development.json` and `appsettings.json` for logging and connection defaults.
+- Configuration: check `appsettings.Development.json` and `appsettings.json` for logging defaults.
 - To publish a release build: `dotnet publish -c Release -o out`.
-
-If you want, I can also add a small launch script or sample `Dockerfile` for the gateway. Which would you prefer next?
+- Run unit tests: `cd gateway-api-cs-tests && dotnet test --filter "Category!=Integration"`
+- Run integration tests (requires Docker): `dotnet test --filter "Category=Integration"`
