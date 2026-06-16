@@ -92,6 +92,7 @@ Or fire a batch and get a pass/fail summary:
 | [`processing-engine-scala/`](processing-engine-scala/README.md) | Scala 3 | Consumes events, upserts SKU quantities in Postgres, routes failures to DLX |
 | [`analytics-worker-python/`](analytics-worker-python/README.md) | Python 3.11 | Aggregates order counts and units per SKU, logs periodic snapshots |
 | [`tools/load-tester/`](tools/load-tester/README.md) | Python / Locust | Simulates concurrent users placing orders |
+| [`tools/mcp-server/`](tools/mcp-server/README.md) | Python / MCP | Exposes inventory and order tools to AI assistants via the Model Context Protocol |
 
 ---
 
