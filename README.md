@@ -17,7 +17,7 @@ This document outlines the technical specification, architectural design, and co
 | Scala processing engine | Implemented | manual ack/nack, Postgres ledger, DLX routing on nack |
 | Postgres | Implemented in compose | `polyglider_inventory` DB, `runMigrations = true` by default |
 | Load tester | Implemented | [tools/load-tester/](tools/load-tester/) |
-| Python analytics worker | Planned | directory not present in repo |
+| Python analytics worker | Implemented | `analytics-worker-python/`, Pika consumer, per-SKU aggregation |
 | DLX / offline buffer | Implemented | DLX in Scala consumer; `System.Threading.Channels` buffer in C# gateway |
 | Kafka | Planned | described in target architecture only |
 | C# unit tests | Implemented | `gateway-api-cs-tests/` (5 tests, no Docker required) |
@@ -91,12 +91,12 @@ Clients send only the fields the gateway needs to construct the event:
 * **Threading Model:** Green-thread concurrency via Cats Effect Fibers.
 * **Behavior:** Establishes a persistent consumer connection to the broker. Events are processed with back-pressure via a bounded queue and worker fibers. The engine utilizes algebraic data types (ADTs) to strictly enforce domain rules and guarantees type safety during ledger updates.
 
-### 3.3 Analytics Worker (`Python 3.11+`) — planned
+### 3.3 Analytics Worker (`Python 3.11+`)
 
-* **Framework:** FastAPI / Asyncio & Pika (or aiokafka)
+* **Framework:** Pika (blocking AMQP client)
 * **Responsibility:** Non-blocking downstream aggregation, data science hooks, and metrics tracking.
-* **Threading Model:** Single-threaded event loop utilizing `async/await` syntax.
-* **Behavior:** Listens concurrently to the same event stream. Because it is decoupled from the Scala state engine, any processing latency inside the Python runtime (e.g., executing a Pandas transformation or calling an ML model) has zero impact on the primary fulfillment pipeline.
+* **Threading Model:** Single-threaded blocking consumer; reconnects automatically on connection loss.
+* **Behavior:** Binds its own durable queue (`analytics.orders.placed`) to `orders.exchange`, so it receives every event independently — the Scala engine and the analytics worker are competing with each other on their own separate queues, not sharing the same one. Aggregates order count and total quantity per SKU in memory and logs a summary every `SUMMARY_EVERY` messages (default 10).
 
 ---
 
@@ -152,7 +152,8 @@ docker-compose up -d
 The quickest path is the all-in-one script, which starts infrastructure, waits for readiness, then launches all services with colour-coded output:
 
 ```bash
-./run-all.sh
+./run-all.sh                  # gateway + Scala engine
+./run-all.sh --analytics      # also start the Python analytics worker
 ```
 
 Press `Ctrl+C` to stop everything cleanly.
@@ -228,9 +229,9 @@ Or use the smoke-test script to fire a batch of randomised orders and see a pass
 
 ## Known gaps
 
-1. **Python analytics worker:** Directory `analytics-worker-python/` is not present — the worker is fully planned but not yet implemented.
-2. **Kafka:** Described in the target architecture as an alternative broker; RabbitMQ is the only broker used today.
-3. **Resiliency — DLX for gateway:** The C# gateway's `RabbitMqPublisherWorker` drops the in-flight message if RabbitMQ goes down mid-publish (at-most-once). The Scala consumer has full DLX routing for failed messages.
+1. **Kafka:** Described in the target architecture as an alternative broker; RabbitMQ is the only broker used today.
+2. **Resiliency — DLX for gateway:** The C# gateway's `RabbitMqPublisherWorker` drops the in-flight message if RabbitMQ goes down mid-publish (at-most-once). The Scala consumer has full DLX routing for failed messages.
+3. **Analytics worker state:** The Python worker aggregates in memory only — restarts reset the counters. A persistent store (Redis, Postgres) would be needed for production.
 
 ---
 

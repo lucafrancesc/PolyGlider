@@ -2,6 +2,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+RUN_ANALYTICS=false
+for arg in "$@"; do [ "$arg" = "--analytics" ] && RUN_ANALYTICS=true; done
 
 # ── colours ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -73,13 +75,29 @@ log "Starting C# gateway..."
 prefix_log "gateway" "$YELLOW" \
   bash -c "cd '$REPO_ROOT/gateway-api-cs' && dotnet run --project gateway-api-cs.csproj"
 
-# ── 4. Wait ───────────────────────────────────────────────────────────────────
+# ── 4. Python analytics worker (optional) ─────────────────────────────────────
+if $RUN_ANALYTICS; then
+  log "Starting Python analytics worker..."
+  ANALYTICS_DIR="$REPO_ROOT/analytics-worker-python"
+  if [ ! -d "$ANALYTICS_DIR/.venv" ]; then
+    log "Creating venv for analytics worker..."
+    python3 -m venv "$ANALYTICS_DIR/.venv"
+    "$ANALYTICS_DIR/.venv/bin/pip" install -q -r "$ANALYTICS_DIR/requirements.txt"
+  fi
+  prefix_log "analytics" "$CYAN" \
+    bash -c "cd '$ANALYTICS_DIR' && .venv/bin/python main.py"
+fi
+
+# ── 5. Wait ───────────────────────────────────────────────────────────────────
 log ""
 log "All services started. Press ${RED}Ctrl+C${RESET} to stop everything."
 log ""
-log "  Gateway   → http://localhost:5187"
-log "  RabbitMQ  → http://localhost:15672  (guest/guest)"
-log "  Postgres  → localhost:5432          (postgres/postgres, db: polyglider_inventory)"
+log "  Gateway    → http://localhost:5187"
+log "  RabbitMQ   → http://localhost:15672  (guest/guest)"
+log "  Postgres   → localhost:5432          (postgres/postgres, db: polyglider_inventory)"
+if $RUN_ANALYTICS; then
+log "  Analytics  → consuming from analytics.orders.placed"
+fi
 log ""
 
 wait "${PIDS[@]}"

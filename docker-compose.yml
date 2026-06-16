@@ -25,6 +25,20 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  analytics-worker:
+    build: ./analytics-worker-python
+    profiles:
+      - analytics
+    environment:
+      - RABBITMQ_HOST=message-broker
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASS=guest
+      - SUMMARY_EVERY=10
+    depends_on:
+      - message-broker
+    restart: on-failure
+
 volumes:
   rabbitmq_data:
   postgres_data:
