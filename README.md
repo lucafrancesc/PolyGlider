@@ -82,7 +82,7 @@ Clients send only the fields the gateway needs to construct the event:
 * **Framework:** ASP.NET Core Minimal APIs
 * **Responsibility:** Receives synchronous `POST /api/orders` requests.
 * **Threading Model:** Non-blocking asynchronous I/O utilizing `Task` abstractions.
-* **Behavior:** Maps incoming HTTP bodies to a strongly typed record, establishes a connection to the message broker via the native client dependency, publishes the `OrderPlaced` event to the exchange, and immediately returns an HTTP `202 Accepted` status code to the client.
+* **Behavior:** Maps incoming HTTP bodies to a strongly typed record, validates `sku` (non-empty) and `quantity` (positive), then writes the `OrderPlaced` event to an in-process `Channel<T>` (capacity 10,000) and immediately returns HTTP `202 Accepted`. A `BackgroundService` (`RabbitMqPublisherWorker`) drains the channel and publishes to the exchange with automatic reconnect — decoupling the HTTP response latency from broker availability.
 
 ### 3.2 Core Processing Engine (`Scala 3`)
 
@@ -139,13 +139,27 @@ docker-compose up -d
 ### Repository layout
 
 * `gateway-api-cs/` — C# ingestion gateway (ASP.NET Core)
+* `gateway-api-cs-tests/` — xUnit unit + Testcontainers integration tests for the gateway
 * `processing-engine-scala/` — Scala core processing engine
 * `tools/load-tester/` — Locust-based load tester
+* `tools/smoke-test.sh` — lightweight curl-based smoke test (no Python required)
 * `analytics-worker-python/` — *(planned)* Python analytics worker
+* `run-all.sh` — starts all services in one command
+* `test-all.sh` — runs all test suites across every component
 
 ### Run locally
 
-1. Start local infrastructure:
+The quickest path is the all-in-one script, which starts infrastructure, waits for readiness, then launches all services with colour-coded output:
+
+```bash
+./run-all.sh
+```
+
+Press `Ctrl+C` to stop everything cleanly.
+
+**Or run each service manually:**
+
+1. Start infrastructure:
 
 ```bash
 docker-compose up -d
@@ -154,26 +168,31 @@ docker-compose up -d
 2. Run the gateway (C#):
 
 ```bash
-cd gateway-api-cs
-dotnet run --project gateway-api-cs.csproj
+cd gateway-api-cs && dotnet run --project gateway-api-cs.csproj
 ```
 
-By default the gateway listens on **http://localhost:5187** (see `Properties/launchSettings.json`).
+By default the gateway listens on **http://localhost:5187**.
 
 3. Run the Scala processing engine:
 
-For ledger persistence, align DB settings with docker-compose before starting. Edit `processing-engine-scala/src/main/resources/application.conf`:
-
-The bundled config defaults to `jdbc:postgresql://localhost:5432/polyglider` with `app.db.runMigrations = false`. To persist ledger data locally, set `runMigrations = true` and ensure the database URL matches a running Postgres instance (create database `polyglider` or change the URL to `polyglider_inventory` from docker-compose).
-
 ```bash
-cd processing-engine-scala
-sbt run
+cd processing-engine-scala && sbt run
 ```
+
+`application.conf` defaults to `polyglider_inventory` with `runMigrations = true` — no manual config edits needed when using docker-compose.
 
 4. *(Optional)* Run the load tester — see [tools/load-tester/README.md](tools/load-tester/README.md).
 
 ### Tests
+
+Run all suites at once:
+
+```bash
+./test-all.sh                    # unit + integration (requires Docker)
+./test-all.sh --no-integration   # unit tests only, no Docker needed
+```
+
+Or run suites individually:
 
 ```bash
 # Scala unit tests (H2 in-memory; no Docker required)
@@ -182,7 +201,7 @@ cd processing-engine-scala && sbt test
 # C# gateway unit tests (no Docker required)
 cd gateway-api-cs-tests && dotnet test --filter "Category!=Integration"
 
-# C# gateway integration tests (requires Docker)
+# C# gateway integration tests (Testcontainers; requires Docker)
 cd gateway-api-cs-tests && dotnet test --filter "Category=Integration"
 ```
 
@@ -197,6 +216,13 @@ curl -X POST http://localhost:5187/api/orders \
 ```
 
 Expected response: HTTP `202 Accepted` with a generated `eventId`.
+
+Or use the smoke-test script to fire a batch of randomised orders and see a pass/fail summary:
+
+```bash
+./tools/smoke-test.sh           # 20 orders (default)
+./tools/smoke-test.sh 50        # custom count
+```
 
 ---
 
