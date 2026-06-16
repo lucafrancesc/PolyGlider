@@ -10,9 +10,8 @@ lazy val root = (project in file("."))
       "org.typelevel" %% "cats-effect" % "3.7.0",
       "co.fs2" %% "fs2-core" % "3.13.0",
 
-      // RabbitMQ integration
-      "dev.profunktor" %% "fs2-rabbit" % "5.5.2",
-      "dev.profunktor" %% "fs2-rabbit-circe" % "5.5.2",
+      // RabbitMQ Java client (used directly by RabbitConsumer)
+      "com.rabbitmq" % "amqp-client" % "5.21.0",
 
       // JSON (Circe)
       "io.circe" %% "circe-core" % "0.14.15",

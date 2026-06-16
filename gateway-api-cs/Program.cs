@@ -11,6 +11,12 @@ builder.Services.AddHostedService<RabbitMqPublisherWorker>();
 
 var app = builder.Build();
 
+app.MapGet("/health", (Channel<OrderPlacedEvent> ch) => Results.Ok(new
+{
+    status = "healthy",
+    bufferAvailable = ch.Reader.CanCount ? ch.Reader.Count < 10_000 : (bool?)null
+}));
+
 app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publisher) =>
 {
     if (string.IsNullOrWhiteSpace(request.Sku))

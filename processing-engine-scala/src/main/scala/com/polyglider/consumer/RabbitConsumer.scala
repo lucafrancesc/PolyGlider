@@ -60,7 +60,7 @@ object RabbitConsumer {
           queue.take.flatMap { d =>
             val task = for {
               order <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
-              _ <- Database.upsertSku(xa, order.sku, order.quantity)
+              _ <- Database.upsertSku(xa, order.eventId, order.sku, order.quantity)
               _ <- IO.blocking(d.channel.basicAck(d.deliveryTag, false))
             } yield ()
 
