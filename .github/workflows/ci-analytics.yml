@@ -1,0 +1,35 @@
+name: Analytics CI
+
+on:
+  push:
+    branches-ignore: [ "main" ]
+    paths:
+      - "analytics-worker-python/**"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "analytics-worker-python/**"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & syntax check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: analytics-worker-python
+        run: pip install -r requirements.txt
+
+      - name: Syntax check
+        working-directory: analytics-worker-python
+        run: python -m py_compile main.py

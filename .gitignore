@@ -17,6 +17,7 @@ __pycache__/
 *.pyc
 .venv/
 env/
+.env
 
 
 # --- IDE Ignore Rules ---
