@@ -1,0 +1,79 @@
+name: Gateway CI
+
+on:
+  push:
+    branches-ignore: [ "main" ]
+    paths:
+      - "gateway-api-cs/**"
+      - "gateway-api-cs-tests/**"
+      - "contracts/**"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "gateway-api-cs/**"
+      - "gateway-api-cs-tests/**"
+      - "contracts/**"
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore
+        working-directory: gateway-api-cs-tests
+        run: dotnet restore
+
+      - name: Unit tests
+        working-directory: gateway-api-cs-tests
+        run: dotnet test --filter "Category!=Integration&Category!=Contract" --no-restore
+
+  contract:
+    name: Contract tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore
+        working-directory: gateway-api-cs-tests
+        run: dotnet restore
+
+      - name: Contract tests
+        working-directory: gateway-api-cs-tests
+        run: dotnet test --filter "Category=Contract" --no-restore
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore
+        working-directory: gateway-api-cs-tests
+        run: dotnet restore
+
+      - name: Integration tests (Testcontainers)
+        working-directory: gateway-api-cs-tests
+        run: dotnet test --filter "Category=Integration" --no-restore
