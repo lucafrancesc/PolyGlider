@@ -1,53 +1,64 @@
-# Gateway API (C# .NET)
+# Gateway API — C# .NET 9
 
-Quick instructions to build and run the ingestion gateway locally.
+The ingestion gateway is the HTTP front-door of the system. It accepts `POST /api/orders` requests, validates the payload, and hands the event off to an in-process channel so the HTTP response is never blocked by broker availability.
 
-## Prerequisites
+**How it works:**
+1. The HTTP handler validates `sku` (non-empty) and `quantity` (positive), then writes an `OrderPlacedEvent` to a bounded `Channel<T>` (capacity 10,000) and immediately returns `202 Accepted`.
+2. `RabbitMqPublisherWorker` (a `BackgroundService`) drains the channel and publishes events to `orders.exchange` on RabbitMQ with camelCase JSON serialization. If the connection drops it retries every 5 seconds.
 
-- .NET 9 SDK
-- Docker & Docker Compose (for local RabbitMQ)
+---
 
-## Build
-
-From the repository root or `gateway-api-cs/` folder:
-
-```bash
-dotnet build gateway-api-cs.csproj
-```
-
-## Run (development)
-
-1. Start the message broker:
+## Run
 
 ```bash
-docker-compose up -d
-```
+# Start RabbitMQ first
+docker compose up -d
 
-2. Run the gateway:
-
-```bash
 cd gateway-api-cs
 dotnet run --project gateway-api-cs.csproj
 ```
 
-By default the app listens on **http://localhost:5187** (see `Properties/launchSettings.json`).
+Listens on **http://localhost:5187**.
 
-## Environment Variables
+### Environment variables
 
-Override broker connection settings via environment variables (double underscore = hierarchy separator):
+Configuration is read via `IConfiguration`. Override broker settings with environment variables (double underscore = section separator):
 
-- `RABBITMQ__HOST` — AMQP host (default: `localhost`)
-- `RABBITMQ__PORT` — AMQP port (default: `5672`)
-- `RABBITMQ__USER` — username (default: `guest`)
-- `RABBITMQ__PASSWORD` — password (default: `guest`)
+| Variable | Default |
+|----------|---------|
+| `RABBITMQ__HOST` | `localhost` |
+| `RABBITMQ__PORT` | `5672` |
+| `RABBITMQ__USER` | `guest` |
+| `RABBITMQ__PASSWORD` | `guest` |
 
-## Smoke test
+---
 
-Exercise end-to-end publishing with the example `POST /api/orders` curl from the [repository README](../README.md#example-request).
+## Endpoints
 
-## Development notes
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/orders` | Place an order |
+| `GET` | `/health` | Returns `{"status":"healthy","bufferAvailable":true/false}` |
 
-- Configuration: check `appsettings.Development.json` and `appsettings.json` for logging defaults.
-- To publish a release build: `dotnet publish -c Release -o out`.
-- Run unit tests: `cd gateway-api-cs-tests && dotnet test --filter "Category!=Integration"`
-- Run integration tests (requires Docker): `dotnet test --filter "Category=Integration"`
+**Example:**
+```bash
+curl -X POST http://localhost:5187/api/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"sku":"LAPTOP-001","quantity":1,"customerId":"22222222-2222-4222-8222-222222222222"}'
+```
+
+---
+
+## Test
+
+```bash
+# Unit tests — no Docker required
+cd gateway-api-cs-tests
+dotnet test --filter "Category!=Integration"
+
+# Integration test — spins up a RabbitMQ container via Testcontainers
+dotnet test --filter "Category=Integration"
+
+# Both
+dotnet test
+```

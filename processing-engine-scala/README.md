@@ -1,80 +1,52 @@
-# Processing Engine (Scala 3)
+# Processing Engine — Scala 3
 
-This module contains the core deterministic processing engine implemented in Scala 3 using Cats Effect, Doobie, and Flyway.
+The core consumer and ledger. It reads `OrderPlaced` events from RabbitMQ, upserts SKU quantities into a Postgres ledger, and routes failures to a Dead Letter Exchange for manual triage.
 
-## Prerequisites
+**How it works:**
+- Declares `orders.placed` queue bound to `orders.exchange` with an `x-dead-letter-exchange` argument pointing to `dlx.orders.exchange`.
+- Runs 4 parallel worker fibers (Cats Effect) each pulling from a bounded in-memory queue (capacity 1,000).
+- Each message: parse JSON → record `event_id` in `processed_events` + upsert ledger qty in a single transaction → ack. A duplicate `event_id` causes a PK violation that rolls back the ledger write (exactly-once semantics). On any error the message is nacked without requeue and routed to the DLX.
+- Flyway runs `V1__create_ledger.sql` and `V2__add_processed_events.sql` at startup when `app.db.runMigrations = true`.
 
-- Java 17+ (or the JDK version targeted by your `build.sbt`)
-- sbt (recommended) or a compatible build tool
-- Docker & Docker Compose (for local RabbitMQ and Postgres)
+---
 
-## Build
-
-From the `processing-engine-scala` directory:
-
-```bash
-sbt compile
-```
-
-## Run (development)
-
-1. Start local infrastructure if not already running:
+## Run
 
 ```bash
-docker-compose up -d
-```
+# Start RabbitMQ and Postgres first
+docker compose up -d
 
-2. Configure Postgres for ledger persistence (optional but recommended):
-
-The bundled `application.conf` defaults to `jdbc:postgresql://localhost:5432/polyglider` with `app.db.runMigrations = false`. Docker Compose creates database **`polyglider_inventory`**. To persist ledger data locally, either:
-
-- Create a `polyglider` database in Postgres and set `app.db.runMigrations = true` in `application.conf`, or
-- Change `app.db.url` to `jdbc:postgresql://localhost:5432/polyglider_inventory` and set `runMigrations = true`.
-
-3. Run the processing engine:
-
-```bash
 cd processing-engine-scala
 sbt run
 ```
 
-## Broker configuration
+### Configuration
 
-RabbitMQ connection settings are read from **environment variables** in `RabbitConsumer` (not from `application.conf`):
+**`src/main/resources/application.conf`** — DB settings (already aligned with docker-compose defaults):
 
-- `RABBIT_HOST` (default: `127.0.0.1`)
-- `RABBIT_PORT` (default: `5672`)
-- `RABBIT_USER` (default: `guest`)
-- `RABBIT_PASS` (default: `guest`)
+| Key | Default |
+|-----|---------|
+| `app.db.url` | `jdbc:postgresql://localhost:5432/polyglider_inventory` |
+| `app.db.user` | `postgres` |
+| `app.db.password` | `postgres` |
+| `app.db.runMigrations` | `true` |
 
-## Testing
+**RabbitMQ** — read from environment variables (not `application.conf`):
 
-Run unit tests with:
+| Variable | Default |
+|----------|---------|
+| `RABBIT_HOST` | `127.0.0.1` |
+| `RABBIT_PORT` | `5672` |
+| `RABBIT_USER` | `guest` |
+| `RABBIT_PASS` | `guest` |
+
+---
+
+## Test
 
 ```bash
+cd processing-engine-scala
 sbt test
 ```
 
-Notes:
-
-- Unit tests use an in-memory H2 datasource for fast execution.
-- Testcontainers integration tests are **planned** (dependencies are declared in `build.sbt`, but no integration tests exist yet).
-
-## Development notes
-
-- Project layout: source under `src/main/scala`, tests under `src/test/scala`.
-- Entry point: Cats Effect `IOApp` in `Main.scala`.
-- Consumer: Java RabbitMQ client with a Cats Effect bounded queue and worker fibers (FS2 is on the classpath but not used by the consumer yet).
-- Flyway migrations: `src/main/resources/db/migration/`.
-
-## Local DB migrations
-
-Flyway migrations run at startup when `app.db.runMigrations = true` in `application.conf`.
-
-```bash
-# from repository root
-docker-compose up -d
-
-cd processing-engine-scala
-sbt run
-```
+Unit tests run against H2 in-memory — no Docker required. They cover JSON parsing, retry logic, UUID validation, ledger upserts, and duplicate event rejection.
