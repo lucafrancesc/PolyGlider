@@ -5,7 +5,10 @@ The core consumer and ledger. It reads `OrderPlaced` events from RabbitMQ, upser
 **How it works:**
 - Declares `orders.placed` queue bound to `orders.exchange` with an `x-dead-letter-exchange` argument pointing to `dlx.orders.exchange`.
 - Runs 4 parallel worker fibers (Cats Effect) each pulling from a bounded in-memory queue (capacity 1,000).
-- Each message: parse JSON → record `event_id` in `processed_events` + upsert ledger qty in a single transaction → ack. A duplicate `event_id` causes a PK violation that rolls back the ledger write (exactly-once semantics). On any error the message is nacked without requeue and routed to the DLX.
+- Each message: parse JSON → record `event_id` in `processed_events` + upsert ledger qty in a single transaction → ack. A duplicate `event_id` causes a PK violation that rolls back the ledger write (exactly-once semantics).
+- On failure, `ProcessingFailure.classify` distinguishes malformed payloads / constraint violations (**permanent**, never going to succeed on retry) from DB/network blips (**transient**, worth retrying):
+  - Permanent failures are nacked without requeue, routing straight to the DLX.
+  - Transient failures are republished to a per-tier retry queue (`retry.orders.placed.<tier>`) with exponential backoff + jitter (`RetryPolicy`, default: 1s base delay, ×3 multiplier, up to 5 retries, ≤250ms jitter). Each retry queue has a fixed `x-message-ttl` and dead-letters back into `orders.exchange` once the delay elapses — RabbitMQ handles the timing, no in-process scheduler needed. Once `max-retries` is exceeded, the message is routed to the DLX instead of retrying forever.
 - Flyway runs `V1__create_ledger.sql` and `V2__add_processed_events.sql` at startup when `app.db.runMigrations = true`.
 
 ---

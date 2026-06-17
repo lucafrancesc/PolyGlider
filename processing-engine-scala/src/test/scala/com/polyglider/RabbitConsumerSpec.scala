@@ -42,4 +42,27 @@ class RabbitConsumerSpec extends CatsEffectSuite {
       assertEquals(size, 1, "dropped message must not be added to the full queue")
     }
   }
+
+  test("retryCountOf defaults to 0 when no header is present") {
+    val props = new com.rabbitmq.client.AMQP.BasicProperties()
+    assertEquals(RabbitConsumer.retryCountOf(props), 0)
+  }
+
+  test("withRetryCount round-trips through retryCountOf") {
+    val props      = new com.rabbitmq.client.AMQP.BasicProperties()
+    val withCount1 = RabbitConsumer.withRetryCount(props, 1)
+    assertEquals(RabbitConsumer.retryCountOf(withCount1), 1)
+
+    val withCount2 = RabbitConsumer.withRetryCount(withCount1, 2)
+    assertEquals(RabbitConsumer.retryCountOf(withCount2), 2)
+  }
+
+  test("withRetryCount preserves other existing headers") {
+    val headers = new java.util.HashMap[String, Object]()
+    headers.put("custom-header", "value")
+    val props   = new com.rabbitmq.client.AMQP.BasicProperties.Builder().headers(headers).build()
+    val updated = RabbitConsumer.withRetryCount(props, 3)
+    assertEquals(RabbitConsumer.retryCountOf(updated), 3)
+    assertEquals(updated.getHeaders.get("custom-header"), "value")
+  }
 }
