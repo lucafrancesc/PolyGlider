@@ -170,7 +170,8 @@ object DlqReprocessor {
           }
 
           val task = for {
-            order <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
+            parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
+            order  <- IO.fromEither(RabbitConsumer.validateUuids(parsed))
             _     <- storage.upsertSku(order.eventId, order.sku, order.quantity)
             _     <- logger.info(s"[${Instant.now}] DLQ reprocess succeeded for eventId=${order.eventId} sku=${order.sku} after ${reprocessCountOf(d.properties)} prior attempt(s)")
             _     <- ack

@@ -66,6 +66,23 @@ class RabbitConsumerSpec extends CatsEffectSuite {
     assertEquals(updated.getHeaders.get("custom-header"), "value")
   }
 
+  private def order(eventId: String = "11111111-1111-4111-8111-111111111111", customerId: String = "22222222-2222-4222-8222-222222222222") =
+    com.polyglider.model.OrderPlaced(eventId, "SKU-1", 2, customerId, "2024-01-01T00:00:00Z")
+
+  test("validateUuids accepts an order with valid eventId and customerId") {
+    assertEquals(RabbitConsumer.validateUuids(order()), Right(order()))
+  }
+
+  test("validateUuids rejects an invalid eventId") {
+    val bad = order(eventId = "not-a-uuid")
+    assertEquals(RabbitConsumer.validateUuids(bad), Left(RabbitConsumer.InvalidUuidException("eventId", "not-a-uuid")))
+  }
+
+  test("validateUuids rejects an invalid customerId") {
+    val bad = order(customerId = "not-a-uuid")
+    assertEquals(RabbitConsumer.validateUuids(bad), Left(RabbitConsumer.InvalidUuidException("customerId", "not-a-uuid")))
+  }
+
   test("eventIdOf extracts eventId from a valid OrderPlaced body") {
     val body =
       """{"eventId":"11111111-1111-1111-1111-111111111111","sku":"SKU-1","quantity":2,"customerId":"22222222-2222-2222-2222-222222222222","timestamp":"2024-01-01T00:00:00Z"}"""
