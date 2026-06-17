@@ -76,11 +76,4 @@ object OrderProcessor {
   // Helper used by tests
   def parsePayload(bytes: Array[Byte]): Either[io.circe.Error, OrderPlaced] =
     parser.parse(new String(bytes, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced])
-
-  def withRetries[A](ioa: IO[A], retries: Int, delay: scala.concurrent.duration.FiniteDuration): IO[A] = {
-    ioa.handleErrorWith { err =>
-      if (retries <= 0) IO.raiseError(err)
-      else IO.sleep(delay) *> withRetries(ioa, retries - 1, delay)
-    }
-  }
 }
