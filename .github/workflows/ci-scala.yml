@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -42,9 +42,3 @@ jobs:
         with:
           name: pact-file
           path: contracts/pacts/scala-engine-cs-gateway.json
-
-      - name: Upload dependency graph
-        if: github.event_name != 'workflow_dispatch'
-        uses: scalacenter/sbt-dependency-submission@ab086b50c947c9774b70f39fc7f6e20ca2706c91
-        with:
-          working-directory: processing-engine-scala
