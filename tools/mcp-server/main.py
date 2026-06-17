@@ -73,8 +73,9 @@ def get_sku_quantity(sku: str) -> dict:
 
 @mcp.tool()
 def list_recent_events(limit: int = 20) -> list[dict]:
-    """Return the most recent processed order events."""
+    """Return the most recent processed order events. `limit` is clamped to [1, 1000]."""
     conn = None
+    limit = max(1, min(limit, 1000))
     try:
         conn = _get_conn()
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
