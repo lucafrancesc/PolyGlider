@@ -9,12 +9,25 @@ import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, 
 import com.polyglider.model.OrderPlaced
 import com.polyglider.storage.SkuStorage
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
+import com.polyglider.UuidUtils
 
 import java.nio.charset.StandardCharsets
 import scala.concurrent.duration.DurationLong
 
 object RabbitConsumer {
   private val RetryCountHeader = "x-retry-count"
+
+  /** A malformed UUID is a property of this specific payload, not the infrastructure, so it
+    * falls into the default-Permanent bucket in `ProcessingFailure.classify` — retrying would
+    * just reproduce the same invalid value.
+    */
+  private[polyglider] final case class InvalidUuidException(field: String, value: String)
+    extends RuntimeException(s"Invalid UUID in field '$field': '$value'")
+
+  private[polyglider] def validateUuids(order: OrderPlaced): Either[InvalidUuidException, OrderPlaced] =
+    if (!UuidUtils.isValidUuid(order.eventId)) Left(InvalidUuidException("eventId", order.eventId))
+    else if (!UuidUtils.isValidUuid(order.customerId)) Left(InvalidUuidException("customerId", order.customerId))
+    else Right(order)
 
   // private[polyglider] so tests in com.polyglider can reference the type
   private[polyglider] case class Delivery(
@@ -145,7 +158,8 @@ object RabbitConsumer {
             }
 
             val task = for {
-              order <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
+              parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
+              order  <- IO.fromEither(validateUuids(parsed))
               _ <- logger.info(s"Message received: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
               _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
               _ <- logger.info(s"Stored to ledger: sku=${order.sku} qty=${order.quantity}")
