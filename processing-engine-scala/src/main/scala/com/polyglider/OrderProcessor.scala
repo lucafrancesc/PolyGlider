@@ -2,6 +2,7 @@ package com.polyglider
 
 import cats.effect.*
 import com.polyglider.consumer.{RabbitConsumer, RetryPolicy}
+import com.polyglider.reprocessor.DlqReprocessor
 import com.polyglider.db.Database
 import com.polyglider.storage.DoobieSkuStorage
 import com.typesafe.config.ConfigFactory
@@ -45,7 +46,20 @@ object OrderProcessor {
       } catch {
         case _: Exception => RetryPolicy.default
       }
-      _ <- RabbitConsumer.start(new DoobieSkuStorage(xa), Logger[IO], summaryEvery = summaryEvery, retryPolicy = retryPolicy)
+      reprocessorPolicy = try {
+        val reprocessorConf = conf.getConfig("app.reprocessor")
+        DlqReprocessor.defaultRetryPolicy.copy(
+          maxRetries = reprocessorConf.getInt("max-retries"),
+          baseDelay = reprocessorConf.getLong("base-delay-ms").millis,
+          multiplier = reprocessorConf.getDouble("backoff-multiplier"),
+          maxJitter = reprocessorConf.getLong("max-jitter-ms").millis
+        )
+      } catch {
+        case _: Exception => DlqReprocessor.defaultRetryPolicy
+      }
+      storage = new DoobieSkuStorage(xa)
+      _ <- RabbitConsumer.start(storage, Logger[IO], summaryEvery = summaryEvery, retryPolicy = retryPolicy)
+      _ <- DlqReprocessor.start(storage, Logger[IO], retryPolicy = reprocessorPolicy)
     } yield ()
 
     // Use the resource and keep the app running
