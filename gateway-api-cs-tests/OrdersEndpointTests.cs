@@ -95,6 +95,42 @@ public class OrdersEndpointTests
     }
 
     [Fact]
+    public async Task PostOrder_SkuTooLong_Returns400()
+    {
+        var fake = new FakeOrderPublisher();
+        await using var factory = BuildFactory(fake);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/orders", new
+        {
+            sku = new string('A', 101),
+            quantity = 1,
+            customerId = "22222222-2222-4222-8222-222222222222"
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(fake.Published);
+    }
+
+    [Fact]
+    public async Task PostOrder_SkuAtMaxLength_Succeeds()
+    {
+        var fake = new FakeOrderPublisher();
+        await using var factory = BuildFactory(fake);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/orders", new
+        {
+            sku = new string('A', 100),
+            quantity = 1,
+            customerId = "22222222-2222-4222-8222-222222222222"
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Single(fake.Published);
+    }
+
+    [Fact]
     public async Task PostOrder_ZeroQuantity_Returns400()
     {
         var fake = new FakeOrderPublisher();

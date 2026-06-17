@@ -68,6 +68,36 @@ public class OrderApiSchemaTests
 
     [Fact]
     [Trait("Category", "Contract")]
+    public void OrderRequest_SkuTooLong_FailsSchema()
+    {
+        var body = new JsonObject
+        {
+            ["sku"] = new string('A', 101),
+            ["quantity"] = 3,
+            ["customerId"] = "22222222-2222-4222-8222-222222222222"
+        };
+
+        var result = RequestSchema.Evaluate(body, Options);
+        Assert.False(result.IsValid, "Expected schema to reject sku longer than 100 characters");
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
+    public void OrderRequest_SkuAtMaxLength_PassesSchema()
+    {
+        var body = new JsonObject
+        {
+            ["sku"] = new string('A', 100),
+            ["quantity"] = 3,
+            ["customerId"] = "22222222-2222-4222-8222-222222222222"
+        };
+
+        var result = RequestSchema.Evaluate(body, Options);
+        Assert.True(result.IsValid, Describe(result));
+    }
+
+    [Fact]
+    [Trait("Category", "Contract")]
     public void OrderRequest_ZeroQuantity_FailsSchema()
     {
         var body = JsonNode.Parse("""

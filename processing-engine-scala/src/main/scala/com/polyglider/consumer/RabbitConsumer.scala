@@ -53,6 +53,17 @@ object RabbitConsumer {
     properties.builder().headers(headers).build()
   }
 
+  /** Best-effort extraction of `eventId` for log correlation, even on the failure path where the
+    * body may not have been (re-)parsed yet. `eventId` is generated once by the gateway and
+    * carried unchanged through every retry/DLX/reprocess hop, so it doubles as the end-to-end
+    * correlation id without needing a separate `traceId` field on the wire.
+    */
+  private[polyglider] def eventIdOf(body: Array[Byte]): String =
+    _root_.io.circe.parser.parse(new String(body, StandardCharsets.UTF_8))
+      .flatMap(_.as[OrderPlaced])
+      .map(_.eventId)
+      .getOrElse("unknown")
+
   // Extracted for unit testing: enqueues d, or nacks + logs if the internal queue is full.
   private[polyglider] def handleOrDrop(
     d: Delivery,
@@ -69,11 +80,12 @@ object RabbitConsumer {
     storage: SkuStorage,
     logger: Logger[IO],
     workerCount: Int = 4,
+    queueSize: Int = 1000,
     summaryEvery: Long = 10,
     retryPolicy: RetryPolicy = RetryPolicy.default
   ): Resource[IO, Unit] =
     for {
-      queue      <- Resource.eval(Queue.bounded[IO, Delivery](1000))
+      queue      <- Resource.eval(Queue.bounded[IO, Delivery](queueSize))
       counter    <- Resource.eval(Ref[IO].of(0L))
       // RabbitMQ Channel is not thread-safe; serialize all ack/nack/publish calls across worker fibers
       channelMutex <- Resource.eval(Mutex[IO])
@@ -139,8 +151,9 @@ object RabbitConsumer {
 
             def retryWithBackoff: IO[Unit] = {
               val attemptsSoFar = retryCountOf(d.properties)
+              val eventId = eventIdOf(d.body)
               if (attemptsSoFar >= retryPolicy.maxRetries) {
-                logger.warn(s"Exceeded max retries (${retryPolicy.maxRetries}) for tag=${d.deliveryTag}; routing to DLX") *> nackToDlx
+                logger.warn(s"Exceeded max retries (${retryPolicy.maxRetries}) for eventId=$eventId tag=${d.deliveryTag}; routing to DLX") *> nackToDlx
               } else {
                 val tier = attemptsSoFar + 1
                 for {
@@ -152,7 +165,7 @@ object RabbitConsumer {
                               })
                   // The retry queue now owns redelivery; ack the original so it isn't redelivered too.
                   _        <- ack
-                  _        <- logger.warn(s"Transient failure for tag=${d.deliveryTag}; scheduled retry $tier/${retryPolicy.maxRetries} in ~${retryPolicy.delayFor(tier)}")
+                  _        <- logger.warn(s"Transient failure for eventId=$eventId tag=${d.deliveryTag}; scheduled retry $tier/${retryPolicy.maxRetries} in ~${retryPolicy.delayFor(tier)}")
                 } yield ()
               }
             }
@@ -162,18 +175,19 @@ object RabbitConsumer {
               order  <- IO.fromEither(validateUuids(parsed))
               _ <- logger.info(s"Message received: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
               _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
-              _ <- logger.info(s"Stored to ledger: sku=${order.sku} qty=${order.quantity}")
+              _ <- logger.info(s"Stored to ledger: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
               _ <- ack
               n <- counter.updateAndGet(_ + 1)
               _ <- if (n % summaryEvery == 0) logSnapshot(storage, logger) else IO.unit
             } yield ()
 
             task.handleErrorWith { err =>
+              val eventId = eventIdOf(d.body)
               ProcessingFailure.classify(err) match {
                 case PermanentFailure(cause) =>
-                  logger.error(cause)("Permanent failure processing message; routing to DLX") *> nackToDlx
+                  logger.error(cause)(s"Permanent failure processing message eventId=$eventId tag=${d.deliveryTag}; routing to DLX") *> nackToDlx
                 case TransientFailure(cause) =>
-                  logger.warn(cause)("Transient failure processing message; scheduling backoff retry") *> retryWithBackoff
+                  logger.warn(cause)(s"Transient failure processing message eventId=$eventId tag=${d.deliveryTag}; scheduling backoff retry") *> retryWithBackoff
               }
             }
           }.foreverM.start
