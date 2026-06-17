@@ -50,6 +50,8 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
 {
     if (string.IsNullOrWhiteSpace(request.Sku))
         return Results.BadRequest(new { error = "sku is required" });
+    if (request.Sku.Length > 100)
+        return Results.BadRequest(new { error = "sku must be at most 100 characters" });
     if (request.Quantity <= 0)
         return Results.BadRequest(new { error = "quantity must be positive" });
 
