@@ -1,4 +1,6 @@
 using System.Threading.Channels;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,7 +11,21 @@ builder.Services.AddSingleton(Channel.CreateBounded<OrderPlacedEvent>(new Bounde
 builder.Services.AddSingleton<IOrderPublisher, ChannelOrderPublisher>();
 builder.Services.AddHostedService<RabbitMqPublisherWorker>();
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter("orders", o =>
+    {
+        o.Window = TimeSpan.FromMinutes(1);
+        o.PermitLimit = builder.Configuration.GetValue("Gateway:RateLimitPerMinute", 100);
+        o.QueueLimit = 0;
+        o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+    });
+    options.RejectionStatusCode = 429;
+});
+
 var app = builder.Build();
+
+app.UseRateLimiter();
 
 app.MapGet("/health", (Channel<OrderPlacedEvent> ch) => Results.Ok(new
 {
@@ -45,7 +61,9 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
         message = "Order queued successfully",
         eventId = orderEvent.EventId
     });
-});
+})
+.AddEndpointFilter<ApiKeyFilter>()
+.RequireRateLimiting("orders");
 
 app.Run();
 
