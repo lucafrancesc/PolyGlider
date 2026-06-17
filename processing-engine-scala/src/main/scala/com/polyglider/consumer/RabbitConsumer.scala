@@ -56,11 +56,12 @@ object RabbitConsumer {
     storage: SkuStorage,
     logger: Logger[IO],
     workerCount: Int = 4,
+    queueSize: Int = 1000,
     summaryEvery: Long = 10,
     retryPolicy: RetryPolicy = RetryPolicy.default
   ): Resource[IO, Unit] =
     for {
-      queue      <- Resource.eval(Queue.bounded[IO, Delivery](1000))
+      queue      <- Resource.eval(Queue.bounded[IO, Delivery](queueSize))
       counter    <- Resource.eval(Ref[IO].of(0L))
       // RabbitMQ Channel is not thread-safe; serialize all ack/nack/publish calls across worker fibers
       channelMutex <- Resource.eval(Mutex[IO])

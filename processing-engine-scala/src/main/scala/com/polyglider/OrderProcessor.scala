@@ -36,6 +36,12 @@ object OrderProcessor {
       summaryEvery = try conf.getConfig("app.consumer").getLong("summary-every") catch {
         case _: Exception => 10L
       }
+      queueSize = try conf.getConfig("app.consumer").getInt("queue-size") catch {
+        case _: Exception => 1000
+      }
+      workerCount = try conf.getConfig("app.consumer").getInt("workers") catch {
+        case _: Exception => 4
+      }
       retryPolicy = try {
         val retryConf = conf.getConfig("app.consumer.retry")
         RetryPolicy(
@@ -66,7 +72,7 @@ object OrderProcessor {
       }
       breaker <- Resource.eval(CircuitBreaker.create("postgres-write", circuitBreakerConf._1, circuitBreakerConf._2, Logger[IO]))
       storage = new CircuitBreakerSkuStorage(new DoobieSkuStorage(xa), breaker)
-      _ <- RabbitConsumer.start(storage, Logger[IO], summaryEvery = summaryEvery, retryPolicy = retryPolicy)
+      _ <- RabbitConsumer.start(storage, Logger[IO], workerCount = workerCount, queueSize = queueSize, summaryEvery = summaryEvery, retryPolicy = retryPolicy)
       _ <- DlqReprocessor.start(storage, Logger[IO], retryPolicy = reprocessorPolicy)
     } yield ()
 
