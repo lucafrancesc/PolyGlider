@@ -12,7 +12,20 @@ import com.polyglider.storage.SkuStorage
 import java.nio.charset.StandardCharsets
 
 object RabbitConsumer {
-  private case class Delivery(channel: Channel, deliveryTag: Long, body: Array[Byte])
+  // private[polyglider] so tests in com.polyglider can reference the type
+  private[polyglider] case class Delivery(channel: Channel, deliveryTag: Long, body: Array[Byte])
+
+  // Extracted for unit testing: enqueues d, or nacks + logs if the internal queue is full.
+  private[polyglider] def handleOrDrop(
+    d: Delivery,
+    queue: Queue[IO, Delivery],
+    nack: IO[Unit],
+    logger: Logger[IO]
+  ): IO[Unit] =
+    queue.tryOffer(d).flatMap {
+      case true  => IO.unit
+      case false => nack *> logger.warn(s"Consumer queue full; nacking tag=${d.deliveryTag} — message routed to DLX")
+    }
 
   def start(storage: SkuStorage, logger: Logger[IO], workerCount: Int = 4, summaryEvery: Long = 10): Resource[IO, Unit] =
     for {
@@ -51,8 +64,9 @@ object RabbitConsumer {
 
         val consumer = new DefaultConsumer(ch) {
           override def handleDelivery(consumerTag: String, envelope: Envelope, properties: AMQP.BasicProperties, body: Array[Byte]): Unit = {
-            val d = Delivery(ch, envelope.getDeliveryTag, body)
-            dispatcher.unsafeRunAndForget(queue.offer(d))
+            val d    = Delivery(ch, envelope.getDeliveryTag, body)
+            val nack = channelMutex.lock.surround(IO.blocking(ch.basicNack(d.deliveryTag, false, false)))
+            dispatcher.unsafeRunAndForget(handleOrDrop(d, queue, nack, logger))
           }
         }
 
