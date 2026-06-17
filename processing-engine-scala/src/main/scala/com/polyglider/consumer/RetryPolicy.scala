@@ -4,7 +4,7 @@ import scala.concurrent.duration._
 
 /** Backoff policy for transient failures.
   *
-  * Each retry tier maps to a dedicated RabbitMQ queue (`retry.orders.placed.<tier>`) with a
+  * Each retry tier maps to a dedicated RabbitMQ queue (`<queuePrefix>.<tier>`) with a
   * fixed `x-message-ttl` and `x-dead-letter-exchange` pointing back at the main exchange, so
   * RabbitMQ itself delays redelivery — no in-process scheduler or timer thread needed.
   *
@@ -15,12 +15,16 @@ import scala.concurrent.duration._
   *
   * Once a message has been retried `maxRetries` times, it is routed to the DLX instead of
   * being retried again — an unbounded retry loop is its own failure mode.
+  *
+  * `queuePrefix` lets independent retry loops (e.g. the main consumer vs. the DLQ reprocessor)
+  * use the same policy shape without colliding on queue names.
   */
 final case class RetryPolicy(
   maxRetries: Int,
   baseDelay: FiniteDuration,
   multiplier: Double,
-  maxJitter: FiniteDuration
+  maxJitter: FiniteDuration,
+  queuePrefix: String = "retry.orders.placed"
 ) {
   def delayFor(tier: Int): FiniteDuration = {
     require(tier >= 1, "tier is 1-indexed")
@@ -28,7 +32,7 @@ final case class RetryPolicy(
     millis.toLong.millis
   }
 
-  def retryQueueName(tier: Int): String = s"retry.orders.placed.$tier"
+  def retryQueueName(tier: Int): String = s"$queuePrefix.$tier"
 }
 
 object RetryPolicy {
