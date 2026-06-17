@@ -119,7 +119,7 @@ HTTP client
     → RabbitMQ exchange "orders.exchange" (topic), routing key "orders.placed"
     → queue "orders.placed"
     → RabbitConsumer (Scala, 4 worker fibers)
-    → Postgres ledger (upsert on sku)
+    → Postgres ledger (upsert on sku + order_count)
 ```
 
 **Failed messages** (nack without requeue from Scala consumer) route to `dlx.orders.exchange` → `dlx.orders.placed` for manual triage.
@@ -135,10 +135,10 @@ HTTP client
 ### Scala engine internals
 
 - `Main.scala` → `OrderProcessor.process` builds a combined `Resource[IO, Unit]`: transactor → conditional Flyway migrations → `RabbitConsumer.start`
-- `RabbitConsumer` — uses raw `com.rabbitmq.client` (not fs2-rabbit, which is a declared but unused dependency); bounded `Queue[IO, Delivery]` (1000) with `workerCount` (default 4) parallel fibers
+- `RabbitConsumer` — uses raw `com.rabbitmq.client` (not fs2-rabbit, which is a declared but unused dependency); bounded `Queue[IO, Delivery]` (1000) with `workerCount` (default 4) parallel fibers; logs a per-SKU analytics snapshot every `app.consumer.summary-every` messages (default 10)
 - `Database` — Doobie + HikariCP; transactor and Flyway migrations only
-- `storage/DoobieSkuStorage` — implements `SkuStorage` trait; `upsertSku` does `INSERT … ON CONFLICT … UPDATE` in one transaction (idempotent); inject the trait in tests to avoid Docker
-- Flyway migration: `V1__create_ledger.sql` — single table `ledger(sku TEXT PRIMARY KEY, qty BIGINT)`
+- `storage/DoobieSkuStorage` — implements `SkuStorage` trait; `upsertSku` does `INSERT … ON CONFLICT … UPDATE` in one transaction (idempotent), incrementing both `qty` and `order_count`; `snapshot` returns all rows ordered by SKU for logging
+- Flyway migrations: `V1` — `ledger(sku TEXT PRIMARY KEY, qty BIGINT)`; `V2` — `processed_events(event_id TEXT PRIMARY KEY)` for dedup; `V3` — adds `order_count BIGINT NOT NULL DEFAULT 0` to `ledger`
 - Tests use H2 in-memory with a manual insert-if-not-exists pattern (H2 doesn't support the Postgres `ON CONFLICT` syntax)
 
 ### Event schema on the broker (camelCase JSON)
