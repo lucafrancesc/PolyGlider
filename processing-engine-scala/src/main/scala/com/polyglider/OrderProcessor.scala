@@ -3,8 +3,9 @@ package com.polyglider
 import cats.effect.*
 import com.polyglider.consumer.{RabbitConsumer, RetryPolicy}
 import com.polyglider.reprocessor.DlqReprocessor
+import com.polyglider.resilience.CircuitBreaker
 import com.polyglider.db.Database
-import com.polyglider.storage.DoobieSkuStorage
+import com.polyglider.storage.{CircuitBreakerSkuStorage, DoobieSkuStorage}
 import com.typesafe.config.ConfigFactory
 import com.polyglider.model.OrderPlaced
 import io.circe.generic.auto.*
@@ -57,7 +58,14 @@ object OrderProcessor {
       } catch {
         case _: Exception => DlqReprocessor.defaultRetryPolicy
       }
-      storage = new DoobieSkuStorage(xa)
+      circuitBreakerConf = try {
+        val cbConf = conf.getConfig("app.circuit-breaker")
+        (cbConf.getInt("max-failures"), cbConf.getLong("reset-timeout-ms").millis)
+      } catch {
+        case _: Exception => (5, 30.seconds)
+      }
+      breaker <- Resource.eval(CircuitBreaker.create("postgres-write", circuitBreakerConf._1, circuitBreakerConf._2, Logger[IO]))
+      storage = new CircuitBreakerSkuStorage(new DoobieSkuStorage(xa), breaker)
       _ <- RabbitConsumer.start(storage, Logger[IO], summaryEvery = summaryEvery, retryPolicy = retryPolicy)
       _ <- DlqReprocessor.start(storage, Logger[IO], retryPolicy = reprocessorPolicy)
     } yield ()

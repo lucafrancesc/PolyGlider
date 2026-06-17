@@ -16,6 +16,9 @@ package com.polyglider.consumer
   *    on their own, so these are Transient.
   *  - Anything unrecognized defaults to Permanent. Failing closed into the DLQ for manual
   *    triage is safer than silently retry-looping forever on an error we don't understand.
+  *  - `CircuitBreakerOpenException` (raised when the Postgres write path's circuit breaker is
+  *    open) is Transient — the breaker tripped because of an infrastructure outage, not
+  *    anything about this particular message.
   */
 sealed trait ProcessingFailure {
   def cause: Throwable
@@ -31,6 +34,7 @@ object ProcessingFailure {
   def classify(err: Throwable): ProcessingFailure = err match {
     case _: io.circe.ParsingFailure  => PermanentFailure(err)
     case _: io.circe.DecodingFailure => PermanentFailure(err)
+    case _: com.polyglider.resilience.CircuitBreakerOpenException => TransientFailure(err)
     case sql: java.sql.SQLException if isInClass(sql.getSQLState, transientSqlStateClasses) =>
       TransientFailure(err)
     case sql: java.sql.SQLException if isInClass(sql.getSQLState, permanentSqlStateClasses) =>
