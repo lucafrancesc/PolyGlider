@@ -8,6 +8,7 @@ import io.circe.generic.auto._
 import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
 import com.polyglider.model.OrderPlaced
 import com.polyglider.storage.SkuStorage
+import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
 
 import java.nio.charset.StandardCharsets
 
@@ -79,8 +80,9 @@ object RabbitConsumer {
       fibers <- Resource.make(
         List.fill(workerCount)(
           queue.take.flatMap { d =>
-            val ack  = channelMutex.lock.surround(IO.blocking(d.channel.basicAck(d.deliveryTag, false)))
-            val nack = channelMutex.lock.surround(IO.blocking(d.channel.basicNack(d.deliveryTag, false, false)))
+            val ack          = channelMutex.lock.surround(IO.blocking(d.channel.basicAck(d.deliveryTag, false)))
+            val nackToDlx    = channelMutex.lock.surround(IO.blocking(d.channel.basicNack(d.deliveryTag, false, false)))
+            val nackRequeue  = channelMutex.lock.surround(IO.blocking(d.channel.basicNack(d.deliveryTag, false, true)))
 
             val task = for {
               order <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
@@ -93,7 +95,12 @@ object RabbitConsumer {
             } yield ()
 
             task.handleErrorWith { err =>
-              logger.error(err)("Failed processing message") *> nack
+              ProcessingFailure.classify(err) match {
+                case PermanentFailure(cause) =>
+                  logger.error(cause)("Permanent failure processing message; routing to DLX") *> nackToDlx
+                case TransientFailure(cause) =>
+                  logger.warn(cause)("Transient failure processing message; requeueing for retry") *> nackRequeue
+              }
             }
           }.foreverM.start
         ).sequence
