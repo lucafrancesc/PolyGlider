@@ -1,6 +1,8 @@
 using System.Threading.Channels;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,6 +12,8 @@ builder.Services.AddSingleton(Channel.CreateBounded<OrderPlacedEvent>(new Bounde
 }));
 builder.Services.AddSingleton<IOrderPublisher, ChannelOrderPublisher>();
 builder.Services.AddHostedService<RabbitMqPublisherWorker>();
+builder.Services.AddSingleton<IRabbitMqProbe, RabbitMqProbe>();
+builder.Services.AddHealthChecks().AddCheck<RabbitMqHealthCheck>("rabbitmq");
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -27,11 +31,20 @@ var app = builder.Build();
 
 app.UseRateLimiter();
 
-app.MapGet("/health", (Channel<OrderPlacedEvent> ch) => Results.Ok(new
+app.MapHealthChecks("/health", new HealthCheckOptions
 {
-    status = "healthy",
-    bufferAvailable = ch.Reader.CanCount ? ch.Reader.Count < 10_000 : (bool?)null
-}));
+    ResponseWriter = async (ctx, report) =>
+    {
+        ctx.Response.ContentType = "application/json";
+        var entry = report.Entries.GetValueOrDefault("rabbitmq");
+        await ctx.Response.WriteAsJsonAsync(new
+        {
+            status = report.Status == HealthStatus.Healthy ? "healthy" : "unhealthy",
+            rabbitmq = entry.Status == HealthStatus.Healthy ? "ok" : "unreachable",
+            bufferUsed = entry.Data?.GetValueOrDefault("bufferUsed")
+        });
+    }
+});
 
 app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publisher, ILogger<Program> logger, HttpContext context) =>
 {
