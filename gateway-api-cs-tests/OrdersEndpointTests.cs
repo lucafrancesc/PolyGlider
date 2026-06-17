@@ -21,14 +21,18 @@ public class FakeOrderPublisher : IOrderPublisher
 
 public class OrdersEndpointTests
 {
-    private WebApplicationFactory<Program> BuildFactory(FakeOrderPublisher fake) =>
+    private WebApplicationFactory<Program> BuildFactory(FakeOrderPublisher fake, string? apiKey = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            if (apiKey is not null)
+                builder.UseSetting("Gateway:ApiKey", apiKey);
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<IOrderPublisher>(fake);
                 var workerDesc = services.FirstOrDefault(d => d.ImplementationType == typeof(RabbitMqPublisherWorker));
                 if (workerDesc is not null) services.Remove(workerDesc);
-            }));
+            });
+        });
 
     [Fact]
     public async Task PostOrder_ValidRequest_Returns202WithEventId()
@@ -142,5 +146,79 @@ public class OrdersEndpointTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.True(response.Headers.Contains("Retry-After"), "Retry-After header must be present");
         Assert.Empty(fake.Published);
+    }
+
+    [Fact]
+    public async Task PostOrder_NoApiKeyConfigured_Returns202()
+    {
+        // Auth is disabled when Gateway:ApiKey is not set — requests go through without a header
+        var fake = new FakeOrderPublisher();
+        await using var factory = BuildFactory(fake);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/orders", new
+        {
+            sku = "TEST-001",
+            quantity = 1,
+            customerId = "22222222-2222-4222-8222-222222222222"
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PostOrder_MissingApiKey_Returns401()
+    {
+        var fake = new FakeOrderPublisher();
+        await using var factory = BuildFactory(fake, apiKey: "secret");
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/orders", new
+        {
+            sku = "TEST-001",
+            quantity = 1,
+            customerId = "22222222-2222-4222-8222-222222222222"
+        });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Empty(fake.Published);
+    }
+
+    [Fact]
+    public async Task PostOrder_WrongApiKey_Returns401()
+    {
+        var fake = new FakeOrderPublisher();
+        await using var factory = BuildFactory(fake, apiKey: "secret");
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Api-Key", "wrong");
+
+        var response = await client.PostAsJsonAsync("/api/orders", new
+        {
+            sku = "TEST-001",
+            quantity = 1,
+            customerId = "22222222-2222-4222-8222-222222222222"
+        });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Empty(fake.Published);
+    }
+
+    [Fact]
+    public async Task PostOrder_CorrectApiKey_Returns202()
+    {
+        var fake = new FakeOrderPublisher();
+        await using var factory = BuildFactory(fake, apiKey: "secret");
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Api-Key", "secret");
+
+        var response = await client.PostAsJsonAsync("/api/orders", new
+        {
+            sku = "TEST-001",
+            quantity = 1,
+            customerId = "22222222-2222-4222-8222-222222222222"
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Single(fake.Published);
     }
 }
