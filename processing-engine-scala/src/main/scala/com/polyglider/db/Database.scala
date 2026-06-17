@@ -10,11 +10,18 @@ object Database {
 
   private val conf = ConfigFactory.load().getConfig("app.db")
 
+  private def jdbcUrl: String = {
+    val base    = conf.getString("url")
+    val sslMode = conf.getString("ssl-mode")
+    if (sslMode == "disable") base
+    else s"$base?sslmode=$sslMode"
+  }
+
   def transactorResource: Resource[IO, HikariTransactor[IO]] = for {
     ec <- ExecutionContexts.fixedThreadPool[IO](32)
     xa <- HikariTransactor.newHikariTransactor[IO](
       "org.postgresql.Driver",
-      conf.getString("url"),
+      jdbcUrl,
       conf.getString("user"),
       conf.getString("password"),
       ec
@@ -22,10 +29,7 @@ object Database {
   } yield xa
 
   def runMigrations(): IO[Unit] = IO.blocking {
-    val url = conf.getString("url")
-    val user = conf.getString("user")
-    val password = conf.getString("password")
-    val flyway = Flyway.configure().dataSource(url, user, password).load()
+    val flyway = Flyway.configure().dataSource(jdbcUrl, conf.getString("user"), conf.getString("password")).load()
     flyway.migrate()
     ()
   }

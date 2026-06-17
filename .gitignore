@@ -28,3 +28,4 @@ env/
 # --- .NET (C#) Ignore Rules ---
 **/bin/
 **/obj/
+certs/

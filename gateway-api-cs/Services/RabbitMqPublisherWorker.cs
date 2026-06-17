@@ -1,3 +1,4 @@
+using System.Net.Security;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -34,19 +35,31 @@ public class RabbitMqPublisherWorker(
 
     private async Task ConnectAndPublishAsync(CancellationToken ct)
     {
+        var host = configuration["RabbitMQ:Host"] ?? "localhost";
+        var ssl  = bool.TryParse(configuration["RabbitMQ:Ssl"], out var s) && s;
+
         var factory = new ConnectionFactory
         {
-            HostName = configuration["RabbitMQ:Host"] ?? "localhost",
-            Port = int.Parse(configuration["RabbitMQ:Port"] ?? "5672"),
+            HostName = host,
+            Port     = ssl ? 5671 : int.Parse(configuration["RabbitMQ:Port"] ?? "5672"),
             UserName = configuration["RabbitMQ:User"] ?? "guest",
             Password = configuration["RabbitMQ:Password"] ?? "guest",
+            Ssl      = new SslOption
+            {
+                Enabled    = ssl,
+                ServerName = host,
+                // Allow self-signed certs in dev; remove in production and provide a trusted CA
+                AcceptablePolicyErrors = ssl
+                    ? SslPolicyErrors.RemoteCertificateNameMismatch | SslPolicyErrors.RemoteCertificateChainErrors
+                    : SslPolicyErrors.None
+            }
         };
 
         await using var connection = await factory.CreateConnectionAsync(ct);
         await using var rabbitChannel = await connection.CreateChannelAsync(cancellationToken: ct);
         await rabbitChannel.ExchangeDeclareAsync(ExchangeName, ExchangeType.Topic, durable: true, cancellationToken: ct);
 
-        logger.LogInformation("Connected to RabbitMQ at {Host}:{Port}", factory.HostName, factory.Port);
+        logger.LogInformation("Connected to RabbitMQ at {Host}:{Port} (ssl={Ssl})", factory.HostName, factory.Port, ssl);
 
         await foreach (var orderEvent in channel.Reader.ReadAllAsync(ct))
         {

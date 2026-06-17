@@ -23,7 +23,8 @@ object RabbitConsumer {
       dispatcher <- Dispatcher.parallel[IO]
       connRes <- Resource.make(IO.blocking {
         val host = sys.env.getOrElse("RABBIT_HOST", "127.0.0.1")
-        val port = sys.env.getOrElse("RABBIT_PORT", "5672").toInt
+        val ssl  = sys.env.get("RABBIT_SSL").contains("true")
+        val port = sys.env.getOrElse("RABBIT_PORT", if (ssl) "5671" else "5672").toInt
         val user = sys.env.getOrElse("RABBIT_USER", "guest")
         val pass = sys.env.getOrElse("RABBIT_PASS", "guest")
 
@@ -32,6 +33,8 @@ object RabbitConsumer {
         factory.setPort(port)
         factory.setUsername(user)
         factory.setPassword(pass)
+        // Enable AMQPS when RABBIT_SSL=true; accepts self-signed certs in dev
+        if (ssl) factory.useSslProtocol()
 
         val conn = factory.newConnection()
         val ch = conn.createChannel()
