@@ -3,26 +3,25 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: polyglider_broker
     ports:
-      - "5672:5672"   # AMQP protocol port
-      - "15672:15672" # Management UI dashboard
+      - "127.0.0.1:5672:5672"   # AMQP protocol port (localhost only)
+      - "127.0.0.1:15672:15672" # Management UI dashboard (localhost only)
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     environment:
-      - RABBITMQ_DEFAULT_USER=guest
-      - RABBITMQ_DEFAULT_PASS=guest
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS:-guest}
 
   postgres:
     image: postgres:16-alpine
     container_name: polyglider_db
     ports:
-      - "5432:5432"   # Standard PostgreSQL port
+      - "127.0.0.1:5432:5432"   # Standard PostgreSQL port (localhost only)
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=polyglider_inventory
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-polyglider_inventory}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
 
 volumes:
   rabbitmq_data:
