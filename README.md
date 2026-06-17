@@ -1,6 +1,6 @@
 # PolyGlider
 
-A polyglot, event-driven order-processing system built to demonstrate how multiple language runtimes can collaborate over a shared message broker. An HTTP gateway (C#) accepts orders, a processing engine (Scala) maintains a ledger in Postgres, and an analytics worker (Python) streams aggregated metrics — all wired together through RabbitMQ.
+A polyglot, event-driven order-processing system built to demonstrate how multiple language runtimes can collaborate over a shared message broker. An HTTP gateway (C#) accepts orders and a processing engine (Scala) maintains a ledger in Postgres — all wired together through RabbitMQ.
 
 ```
 POST /api/orders
@@ -11,15 +11,14 @@ POST /api/orders
                                     orders.exchange (topic)
                                          routing key: orders.placed
                                               │
-                          ┌───────────────────┴──────────────────────┐
-                          ▼                                           ▼
-               queue: orders.placed                  queue: analytics.orders.placed
-                          │                                           │
-                    Scala Engine                             Python analytics worker
-                  (ledger → Postgres)                        (in-memory aggregation)
-                          │
-                   nack → DLX
-             (dlx.orders.placed)
+                                             ▼
+                                  queue: orders.placed
+                                              │
+                                        Scala Engine
+                              (ledger → Postgres, analytics snapshot)
+                                              │
+                                       nack → DLX
+                                 (dlx.orders.placed)
 ```
 
 ---
@@ -31,7 +30,7 @@ POST /api/orders
 | Docker & Docker Compose | any recent | infrastructure |
 | .NET SDK | 9 | C# gateway |
 | Java + sbt | 17+ / 1.9+ | Scala engine |
-| Python | 3.11+ | analytics worker, load tester |
+| Python | 3.11+ | load tester, MCP server |
 
 ---
 
@@ -43,9 +42,6 @@ docker compose up -d
 
 # Start all services with colour-coded output
 ./run-all.sh
-
-# Also start the Python analytics worker
-./run-all.sh --analytics
 ```
 
 Press `Ctrl+C` to stop everything. The script waits for RabbitMQ and Postgres to be healthy before starting the services.
@@ -107,8 +103,7 @@ Or fire a batch and get a pass/fail summary:
 | Directory | Language | What it does |
 |-----------|----------|--------------|
 | [`gateway-api-cs/`](gateway-api-cs/README.md) | C# .NET 9 | Accepts `POST /api/orders`, buffers events, publishes to RabbitMQ |
-| [`processing-engine-scala/`](processing-engine-scala/README.md) | Scala 3 | Consumes events, upserts SKU quantities in Postgres, routes failures to DLX |
-| [`analytics-worker-python/`](analytics-worker-python/README.md) | Python 3.11 | Aggregates order counts and units per SKU, logs periodic snapshots |
+| [`processing-engine-scala/`](processing-engine-scala/README.md) | Scala 3 | Consumes events, upserts SKU quantities and order counts in Postgres, logs periodic analytics snapshots, routes failures to DLX |
 | [`tools/load-tester/`](tools/load-tester/README.md) | Python / Locust | Simulates concurrent users placing orders |
 | [`tools/mcp-server/`](tools/mcp-server/README.md) | Python / MCP | Exposes inventory and order tools to AI assistants via the Model Context Protocol |
 
