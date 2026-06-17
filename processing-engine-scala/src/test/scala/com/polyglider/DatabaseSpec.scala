@@ -132,4 +132,28 @@ class DatabaseSpec extends CatsEffectSuite {
 
     program
   }
+
+  test("ledger rejects negative qty") {
+    import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
+    val cfg = new HikariConfig()
+    cfg.setJdbcUrl("jdbc:h2:mem:neg_qty;DB_CLOSE_DELAY=-1")
+    cfg.setUsername("sa")
+    cfg.setPassword("")
+    val ds = new HikariDataSource(cfg)
+    val xa = Transactor.fromDataSource[IO](ds, scala.concurrent.ExecutionContext.global)
+
+    val program = for {
+      _ <- sql"""
+        CREATE TABLE ledger (
+          sku VARCHAR PRIMARY KEY,
+          qty BIGINT NOT NULL CHECK (qty >= 0),
+          order_count BIGINT NOT NULL DEFAULT 0 CHECK (order_count >= 0)
+        )""".update.run.transact(xa)
+      _ <- sql"INSERT INTO ledger (sku, qty) VALUES ('SKU-A', 5)".update.run.transact(xa)
+      result <- sql"UPDATE ledger SET qty = -1 WHERE sku = 'SKU-A'".update.run.transact(xa).attempt
+      _ <- IO(assert(result.isLeft, "negative qty must be rejected by CHECK constraint"))
+    } yield ()
+
+    program
+  }
 }
