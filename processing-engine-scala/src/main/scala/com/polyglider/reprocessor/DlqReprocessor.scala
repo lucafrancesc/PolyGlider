@@ -8,7 +8,7 @@ import io.circe.generic.auto._
 import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
 import com.polyglider.model.OrderPlaced
 import com.polyglider.storage.SkuStorage
-import com.polyglider.consumer.RetryPolicy
+import com.polyglider.consumer.{RabbitConsumer, RetryPolicy}
 import com.polyglider.consumer.ProcessingFailure
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
 
@@ -149,10 +149,10 @@ object DlqReprocessor {
               d.channel.basicPublish("", "needs-attention.orders.placed", props, d.body)
             }) *> ack
 
-          def retryReprocess(reason: String): IO[Unit] = {
+          def retryReprocess(eventId: String, reason: String): IO[Unit] = {
             val attemptsSoFar = reprocessCountOf(d.properties)
             if (attemptsSoFar >= retryPolicy.maxRetries) {
-              logger.error(s"[${Instant.now}] DLQ reprocess exhausted after $attemptsSoFar attempt(s) (reason=$reason); escalating to needs-attention.orders.placed") *>
+              logger.error(s"[${Instant.now}] DLQ reprocess exhausted for eventId=$eventId after $attemptsSoFar attempt(s) (reason=$reason); escalating to needs-attention.orders.placed") *>
                 escalate(reason, attemptsSoFar)
             } else {
               val tier = attemptsSoFar + 1
@@ -164,7 +164,7 @@ object DlqReprocessor {
                               d.channel.basicPublish("", retryPolicy.retryQueueName(tier), retryProps, d.body)
                             })
                 _        <- ack
-                _        <- logger.warn(s"[${Instant.now}] DLQ reprocess attempt $tier/${retryPolicy.maxRetries} scheduled (reason=$reason); retrying in ~${retryPolicy.delayFor(tier)}")
+                _        <- logger.warn(s"[${Instant.now}] DLQ reprocess attempt $tier/${retryPolicy.maxRetries} scheduled for eventId=$eventId (reason=$reason); retrying in ~${retryPolicy.delayFor(tier)}")
               } yield ()
             }
           }
@@ -177,12 +177,13 @@ object DlqReprocessor {
           } yield ()
 
           task.handleErrorWith { err =>
+            val eventId = RabbitConsumer.eventIdOf(d.body)
             ProcessingFailure.classify(err) match {
               case PermanentFailure(cause) =>
-                logger.error(cause)(s"[${Instant.now}] DLQ reprocess hit a permanent failure; escalating immediately") *>
+                logger.error(cause)(s"[${Instant.now}] DLQ reprocess hit a permanent failure for eventId=$eventId; escalating immediately") *>
                   escalate(cause.getMessage, reprocessCountOf(d.properties))
               case TransientFailure(cause) =>
-                logger.warn(cause)(s"[${Instant.now}] DLQ reprocess hit a transient failure") *> retryReprocess(cause.getMessage)
+                logger.warn(cause)(s"[${Instant.now}] DLQ reprocess hit a transient failure for eventId=$eventId") *> retryReprocess(eventId, cause.getMessage)
             }
           }
         }.foreverM.start

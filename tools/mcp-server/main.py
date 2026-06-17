@@ -12,6 +12,7 @@ Environment variables (all optional, defaults shown):
   GATEWAY_URL    http://localhost:5187
 """
 
+import logging
 import os
 
 import httpx
@@ -21,6 +22,9 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("polyglider-inventory")
 
 POSTGRES_URL = os.getenv(
     "POSTGRES_URL",
@@ -104,11 +108,19 @@ def place_order(sku: str, quantity: int, customer_id: str) -> dict:
         with httpx.Client(timeout=10.0) as client:
             response = client.post(f"{GATEWAY_URL}/api/orders", json=payload)
         if response.status_code == 202:
-            return response.json()
+            body = response.json()
+            # eventId is generated once by the gateway and carried unchanged through the
+            # RabbitMQ event, retries, and the DLQ/reprocessor — logging it here lets an
+            # operator grep the same id across gateway and Scala consumer logs.
+            logger.info("place_order succeeded: eventId=%s sku=%s quantity=%d", body.get("eventId"), sku, quantity)
+            return body
+        logger.warning("place_order failed: gateway returned %d for sku=%s", response.status_code, sku)
         return {"error": f"Gateway returned {response.status_code}", "body": response.text}
     except httpx.ConnectError as e:
+        logger.error("place_order failed: gateway unreachable for sku=%s: %s", sku, e)
         return {"error": f"Gateway unreachable: {e}"}
     except httpx.TimeoutException as e:
+        logger.error("place_order failed: gateway timed out for sku=%s: %s", sku, e)
         return {"error": f"Gateway timed out: {e}"}
 
 
