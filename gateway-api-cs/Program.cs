@@ -17,7 +17,7 @@ app.MapGet("/health", (Channel<OrderPlacedEvent> ch) => Results.Ok(new
     bufferAvailable = ch.Reader.CanCount ? ch.Reader.Count < 10_000 : (bool?)null
 }));
 
-app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publisher, ILogger<Program> logger) =>
+app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publisher, ILogger<Program> logger, HttpContext context) =>
 {
     if (string.IsNullOrWhiteSpace(request.Sku))
         return Results.BadRequest(new { error = "sku is required" });
@@ -34,7 +34,11 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
 
     logger.LogInformation("Order received: sku={Sku} qty={Quantity} eventId={EventId}", request.Sku, request.Quantity, orderEvent.EventId);
 
-    await publisher.PublishAsync(orderEvent);
+    if (!await publisher.PublishAsync(orderEvent))
+    {
+        context.Response.Headers.RetryAfter = "1";
+        return Results.StatusCode(503);
+    }
 
     return Results.Accepted($"/api/orders/{orderEvent.EventId}", new
     {
