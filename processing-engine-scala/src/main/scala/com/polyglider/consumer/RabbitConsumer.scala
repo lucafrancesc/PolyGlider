@@ -1,7 +1,7 @@
 package com.polyglider.consumer
 
 import cats.effect.*
-import cats.effect.std.{Dispatcher, Queue}
+import cats.effect.std.{Dispatcher, Mutex, Queue}
 import cats.syntax.all.*
 import org.typelevel.log4cats.Logger
 import io.circe.generic.auto._
@@ -18,6 +18,8 @@ object RabbitConsumer {
     for {
       queue      <- Resource.eval(Queue.bounded[IO, Delivery](1000))
       counter    <- Resource.eval(Ref[IO].of(0L))
+      // RabbitMQ Channel is not thread-safe; serialize all ack/nack calls across worker fibers
+      channelMutex <- Resource.eval(Mutex[IO])
       dispatcher <- Dispatcher.parallel[IO]
       connRes <- Resource.make(IO.blocking {
         val host = sys.env.getOrElse("RABBIT_HOST", "127.0.0.1")
@@ -60,18 +62,21 @@ object RabbitConsumer {
       fibers <- Resource.make(
         List.fill(workerCount)(
           queue.take.flatMap { d =>
+            val ack  = channelMutex.lock.surround(IO.blocking(d.channel.basicAck(d.deliveryTag, false)))
+            val nack = channelMutex.lock.surround(IO.blocking(d.channel.basicNack(d.deliveryTag, false, false)))
+
             val task = for {
               order <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
               _ <- logger.info(s"Message received: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
               _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
               _ <- logger.info(s"Stored to ledger: sku=${order.sku} qty=${order.quantity}")
-              _ <- IO.blocking(d.channel.basicAck(d.deliveryTag, false))
+              _ <- ack
               n <- counter.updateAndGet(_ + 1)
               _ <- if (n % summaryEvery == 0) logSnapshot(storage, logger) else IO.unit
             } yield ()
 
             task.handleErrorWith { err =>
-              logger.error(err)("Failed processing message") *> IO.blocking(d.channel.basicNack(d.deliveryTag, false, false))
+              logger.error(err)("Failed processing message") *> nack
             }
           }.foreverM.start
         ).sequence
