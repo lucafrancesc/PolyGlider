@@ -31,7 +31,10 @@ object OrderProcessor {
         if runMigs then Database.runMigrations() *> Logger[IO].info("Flyway migrations executed")
         else Logger[IO].info("Skipping Flyway migrations (app.db.runMigrations=false)")
       )
-      _ <- RabbitConsumer.start(new DoobieSkuStorage(xa), Logger[IO])
+      summaryEvery = try conf.getConfig("app.consumer").getLong("summary-every") catch {
+        case _: Exception => 10L
+      }
+      _ <- RabbitConsumer.start(new DoobieSkuStorage(xa), Logger[IO], summaryEvery = summaryEvery)
     } yield ()
 
     // Use the resource and keep the app running

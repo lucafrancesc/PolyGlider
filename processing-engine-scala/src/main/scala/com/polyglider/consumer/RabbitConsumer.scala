@@ -14,9 +14,10 @@ import java.nio.charset.StandardCharsets
 object RabbitConsumer {
   private case class Delivery(channel: Channel, deliveryTag: Long, body: Array[Byte])
 
-  def start(storage: SkuStorage, logger: Logger[IO], workerCount: Int = 4): Resource[IO, Unit] =
+  def start(storage: SkuStorage, logger: Logger[IO], workerCount: Int = 4, summaryEvery: Long = 10): Resource[IO, Unit] =
     for {
       queue      <- Resource.eval(Queue.bounded[IO, Delivery](1000))
+      counter    <- Resource.eval(Ref[IO].of(0L))
       dispatcher <- Dispatcher.parallel[IO]
       connRes <- Resource.make(IO.blocking {
         val host = sys.env.getOrElse("RABBIT_HOST", "127.0.0.1")
@@ -65,6 +66,8 @@ object RabbitConsumer {
               _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
               _ <- logger.info(s"Stored to ledger: sku=${order.sku} qty=${order.quantity}")
               _ <- IO.blocking(d.channel.basicAck(d.deliveryTag, false))
+              n <- counter.updateAndGet(_ + 1)
+              _ <- if (n % summaryEvery == 0) logSnapshot(storage, logger) else IO.unit
             } yield ()
 
             task.handleErrorWith { err =>
@@ -73,5 +76,13 @@ object RabbitConsumer {
           }.foreverM.start
         ).sequence
       )(fs => fs.traverse_(_.cancel))
+    } yield ()
+
+  private def logSnapshot(storage: SkuStorage, logger: Logger[IO]): IO[Unit] =
+    for {
+      stats  <- storage.snapshot
+      total   = stats.foldLeft((0L, 0L)) { case ((orders, units), s) => (orders + s.orderCount, units + s.qty) }
+      _      <- logger.info(s"── Analytics snapshot (${total._1} orders, ${total._2} units) ──")
+      _      <- stats.traverse_(s => logger.info(f"  ${s.sku}%-22s orders=${s.orderCount}%-8d units=${s.qty}"))
     } yield ()
 }
