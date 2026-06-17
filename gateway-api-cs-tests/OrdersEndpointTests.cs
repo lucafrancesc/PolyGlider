@@ -10,10 +10,12 @@ namespace gateway_api_cs_tests;
 public class FakeOrderPublisher : IOrderPublisher
 {
     public List<OrderPlacedEvent> Published { get; } = [];
-    public ValueTask PublishAsync(OrderPlacedEvent orderEvent)
+    public bool AcceptsWrites { get; set; } = true;
+    public ValueTask<bool> PublishAsync(OrderPlacedEvent orderEvent)
     {
+        if (!AcceptsWrites) return ValueTask.FromResult(false);
         Published.Add(orderEvent);
-        return ValueTask.CompletedTask;
+        return ValueTask.FromResult(true);
     }
 }
 
@@ -121,5 +123,24 @@ public class OrdersEndpointTests
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PostOrder_BufferFull_Returns503WithRetryAfterHeader()
+    {
+        var fake = new FakeOrderPublisher { AcceptsWrites = false };
+        await using var factory = BuildFactory(fake);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/orders", new
+        {
+            sku = "TEST-001",
+            quantity = 1,
+            customerId = "22222222-2222-4222-8222-222222222222"
+        });
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.True(response.Headers.Contains("Retry-After"), "Retry-After header must be present");
+        Assert.Empty(fake.Published);
     }
 }
