@@ -13,13 +13,21 @@ public class RabbitMqPublisherWorker(
     private const string ExchangeName = "orders.exchange";
     private const string RoutingKey = "orders.placed";
 
+    private static readonly TimeSpan BaseDelay = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaxJitter = TimeSpan.FromSeconds(1);
+    private const double BackoffMultiplier = 2.0;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var attempt = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await ConnectAndPublishAsync(stoppingToken);
+                // Reset the backoff once we're actually connected, so a transient blip after a
+                // long healthy run doesn't inherit a stale, maxed-out attempt count.
+                await ConnectAndPublishAsync(stoppingToken, () => attempt = 0);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -27,13 +35,15 @@ public class RabbitMqPublisherWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "RabbitMQ connection lost, retrying in 5s");
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                var delay = ReconnectBackoff.Delay(attempt, BaseDelay, BackoffMultiplier, MaxDelay, MaxJitter, Random.Shared);
+                attempt++;
+                logger.LogError(ex, "RabbitMQ connection lost, retrying in {Delay}", delay);
+                await Task.Delay(delay, stoppingToken);
             }
         }
     }
 
-    private async Task ConnectAndPublishAsync(CancellationToken ct)
+    private async Task ConnectAndPublishAsync(CancellationToken ct, Action onConnected)
     {
         var host = configuration["RabbitMQ:Host"] ?? "localhost";
         var ssl  = bool.TryParse(configuration["RabbitMQ:Ssl"], out var s) && s;
@@ -60,6 +70,7 @@ public class RabbitMqPublisherWorker(
         await rabbitChannel.ExchangeDeclareAsync(ExchangeName, ExchangeType.Topic, durable: true, cancellationToken: ct);
 
         logger.LogInformation("Connected to RabbitMQ at {Host}:{Port} (ssl={Ssl})", factory.HostName, factory.Port, ssl);
+        onConnected();
 
         await foreach (var orderEvent in channel.Reader.ReadAllAsync(ct))
         {
