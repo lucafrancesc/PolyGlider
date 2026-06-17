@@ -65,4 +65,16 @@ class RabbitConsumerSpec extends CatsEffectSuite {
     assertEquals(RabbitConsumer.retryCountOf(updated), 3)
     assertEquals(updated.getHeaders.get("custom-header"), "value")
   }
+
+  test("eventIdOf extracts eventId from a valid OrderPlaced body") {
+    val body =
+      """{"eventId":"11111111-1111-1111-1111-111111111111","sku":"SKU-1","quantity":2,"customerId":"22222222-2222-2222-2222-222222222222","timestamp":"2024-01-01T00:00:00Z"}"""
+        .getBytes("UTF-8")
+    assertEquals(RabbitConsumer.eventIdOf(body), "11111111-1111-1111-1111-111111111111")
+  }
+
+  test("eventIdOf returns \"unknown\" for malformed JSON") {
+    val body = "{ not: valid json }".getBytes("UTF-8")
+    assertEquals(RabbitConsumer.eventIdOf(body), "unknown")
+  }
 }
