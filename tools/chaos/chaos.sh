@@ -6,10 +6,17 @@
 #   ./chaos.sh random
 #
 # Scenarios:
-#   postgres-kill      stop the Postgres container for DURATION seconds, then restart it
-#   broker-delay       pause the RabbitMQ container for DURATION seconds (connections hang), then unpause
-#   malformed-payload  publish an unparseable message directly to orders.exchange
-#   duplicate-message  publish the same eventId twice directly to orders.exchange
+#   postgres-kill           stop the Postgres container for DURATION seconds, then restart it
+#   broker-delay            pause the RabbitMQ container for DURATION seconds (connections hang), then unpause
+#   malformed-payload       publish an unparseable message directly to orders.exchange
+#   duplicate-message       publish the same eventId twice directly to orders.exchange
+#   dlq-reprocessor-retry   stop Postgres, publish a message pre-tagged to land straight in
+#                           dlx.orders.placed with a transient reason, then restart Postgres —
+#                           exercises DlqReprocessor's bounded retry-before-escalate path rather
+#                           than its immediate-escalate path. DURATION < 10s: the first reprocess
+#                           attempt also fails, succeeds on the tier-1 retry. DURATION >= ~70s
+#                           (the reprocessor's own 3-tier budget: 10s+20s+40s): exhausts retries
+#                           and escalates to needs-attention.orders.placed instead.
 #
 # Requires: docker, and a Python venv with tools/chaos/requirements.txt installed for the
 # message-injection scenarios (see tools/chaos/README.md).
@@ -49,6 +56,14 @@ case "$SCENARIO" in
   duplicate-message)
     echo -e "${YELLOW}[chaos] publishing a duplicate eventId to orders.exchange${RESET}"
     python3 "$SCRIPT_DIR/publish_chaos_message.py" duplicate
+    ;;
+  dlq-reprocessor-retry)
+    echo -e "${YELLOW}[chaos] stopping polyglider_db for ${DURATION}s, publishing a transient-reason message straight into dlx.orders.placed${RESET}"
+    docker stop polyglider_db
+    python3 "$SCRIPT_DIR/publish_chaos_message.py" transient-in-dlx
+    sleep "$DURATION"
+    docker start polyglider_db
+    echo -e "${GREEN}[chaos] polyglider_db restarted${RESET}"
     ;;
   *)
     echo "Unknown scenario: $SCENARIO" >&2
