@@ -36,6 +36,10 @@ lazy val root = (project in file("."))
       // Typesafe config
       "com.typesafe" % "config" % "1.4.2",
 
+      // Prometheus metrics + /metrics HTTP endpoint
+      "io.prometheus" % "simpleclient" % "0.16.0",
+      "io.prometheus" % "simpleclient_httpserver" % "0.16.0",
+
       // Testing
       "org.scalameta" %% "munit" % "1.3.3" % Test,
       "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test,

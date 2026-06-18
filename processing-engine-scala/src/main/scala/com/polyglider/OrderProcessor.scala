@@ -4,6 +4,7 @@ import cats.effect.*
 import com.polyglider.consumer.{RabbitConsumer, RetryPolicy}
 import com.polyglider.reprocessor.DlqReprocessor
 import com.polyglider.resilience.CircuitBreaker
+import com.polyglider.metrics.Metrics
 import com.polyglider.db.Database
 import com.polyglider.storage.{CircuitBreakerSkuStorage, DoobieSkuStorage}
 import com.typesafe.config.ConfigFactory
@@ -70,10 +71,17 @@ object OrderProcessor {
       } catch {
         case _: Exception => (5, 30.seconds)
       }
-      breaker <- Resource.eval(CircuitBreaker.create("postgres-write", circuitBreakerConf._1, circuitBreakerConf._2, Logger[IO]))
+      metricsPort = try conf.getConfig("app.metrics").getInt("port") catch {
+        case _: Exception => 9100
+      }
+      dlqPollInterval = try conf.getConfig("app.metrics").getLong("dlq-poll-interval-ms").millis catch {
+        case _: Exception => 15.seconds
+      }
+      _ <- Metrics.startServer(metricsPort)
+      breaker <- Resource.eval(CircuitBreaker.create("postgres-write", circuitBreakerConf._1, circuitBreakerConf._2, Logger[IO], Metrics.onCircuitBreakerStateChange("postgres-write")))
       storage = new CircuitBreakerSkuStorage(new DoobieSkuStorage(xa), breaker)
       _ <- RabbitConsumer.start(storage, Logger[IO], workerCount = workerCount, queueSize = queueSize, summaryEvery = summaryEvery, retryPolicy = retryPolicy)
-      _ <- DlqReprocessor.start(storage, Logger[IO], retryPolicy = reprocessorPolicy)
+      _ <- DlqReprocessor.start(storage, Logger[IO], retryPolicy = reprocessorPolicy, dlqDepthPollInterval = dlqPollInterval)
     } yield ()
 
     // Use the resource and keep the app running

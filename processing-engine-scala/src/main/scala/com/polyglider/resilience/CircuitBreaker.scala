@@ -37,29 +37,34 @@ final class CircuitBreaker private (
   state: Ref[IO, BreakerState],
   maxFailures: Int,
   resetTimeout: FiniteDuration,
-  logger: Logger[IO]
+  logger: Logger[IO],
+  onStateChange: String => IO[Unit]
 ) {
   import BreakerState.*
 
   def protect[A](ioa: IO[A]): IO[A] =
     IO.monotonic.flatMap { now =>
       state.modify {
-        case s @ Closed(_) => (s, true)
-        case Open(openedAt) if now - openedAt >= resetTimeout => (HalfOpen, true)
-        case s @ Open(_) => (s, false)
-        case HalfOpen => (HalfOpen, false)
+        case s @ Closed(_) => (s, (true, None))
+        case Open(openedAt) if now - openedAt >= resetTimeout => (HalfOpen, (true, Some("half-open")))
+        case s @ Open(_) => (s, (false, None))
+        case HalfOpen => (HalfOpen, (false, None))
       }
-    }.flatMap {
-      case false => IO.raiseError(CircuitBreakerOpenException(name))
-      case true  => ioa.attempt.flatMap(_.fold(onFailure, onSuccess))
+    }.flatMap { case (allowed, transition) =>
+      transition.traverse_(onStateChange) *> {
+        if (!allowed) IO.raiseError(CircuitBreakerOpenException(name))
+        else ioa.attempt.flatMap(_.fold(onFailure, onSuccess))
+      }
     }
 
   private def onSuccess[A](a: A): IO[A] =
     state.modify {
       case HalfOpen => (Closed(0), true)
       case _         => (Closed(0), false)
-    }.flatMap(reclosed => logger.info(s"Circuit breaker '$name' closed after a successful call").whenA(reclosed))
-      .as(a)
+    }.flatMap { reclosed =>
+      logger.info(s"Circuit breaker '$name' closed after a successful call").whenA(reclosed) *>
+        onStateChange("closed").whenA(reclosed)
+    }.as(a)
 
   private def onFailure[A](err: Throwable): IO[A] =
     IO.monotonic.flatMap { now =>
@@ -70,11 +75,19 @@ final class CircuitBreaker private (
         case HalfOpen => (Open(now), true)
         case s @ Open(_) => (s, false)
       }
-    }.flatMap(tripped => logger.warn(err)(s"Circuit breaker '$name' tripped open after $maxFailures consecutive failures").whenA(tripped))
-      .flatMap(_ => IO.raiseError(err))
+    }.flatMap { tripped =>
+      logger.warn(err)(s"Circuit breaker '$name' tripped open after $maxFailures consecutive failures").whenA(tripped) *>
+        onStateChange("open").whenA(tripped)
+    }.flatMap(_ => IO.raiseError(err))
 }
 
 object CircuitBreaker {
-  def create(name: String, maxFailures: Int, resetTimeout: FiniteDuration, logger: Logger[IO]): IO[CircuitBreaker] =
-    Ref[IO].of[BreakerState](BreakerState.Closed(0)).map(new CircuitBreaker(name, _, maxFailures, resetTimeout, logger))
+  def create(
+    name: String,
+    maxFailures: Int,
+    resetTimeout: FiniteDuration,
+    logger: Logger[IO],
+    onStateChange: String => IO[Unit] = _ => IO.unit
+  ): IO[CircuitBreaker] =
+    Ref[IO].of[BreakerState](BreakerState.Closed(0)).map(new CircuitBreaker(name, _, maxFailures, resetTimeout, logger, onStateChange))
 }

@@ -1,0 +1,20 @@
+groups:
+  - name: polyglider-resilience
+    rules:
+      - alert: DlqDepthHigh
+        expr: polyglider_dlq_depth{queue="dlx.orders.placed"} > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "dlx.orders.placed depth above 50 for 2 minutes"
+          description: "The DLQ reprocessor isn't draining dlx.orders.placed fast enough, or messages are failing reprocessing repeatedly. Check needs-attention.orders.placed and recent reprocessor logs."
+
+      - alert: CircuitBreakerOpenTooLong
+        expr: polyglider_circuit_breaker_state{name="postgres-write"} == 2
+        for: 60s
+        labels:
+          severity: critical
+        annotations:
+          summary: "postgres-write circuit breaker open for over 60s"
+          description: "The Postgres write path has been failing fast for over a minute. Check Postgres availability; see the circuit-breaker runbook entry once it's open recovers cleanly."
