@@ -4,7 +4,18 @@
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
-    <root level="info">
+
+    <!-- Decouples message-processing threads from console I/O. Without this, logging under
+         high throughput blocks the worker fiber doing the actual write/ack until the console
+         write completes. discardingThreshold=0 means we never silently drop a log line under
+         load; queueSize bounds the memory cost of that decision. -->
+    <appender name="ASYNC_STDOUT" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
         <appender-ref ref="STDOUT" />
+    </appender>
+
+    <root level="info">
+        <appender-ref ref="ASYNC_STDOUT" />
     </root>
 </configuration>
