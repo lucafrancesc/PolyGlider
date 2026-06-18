@@ -142,11 +142,14 @@ object DlqReprocessor {
       _ <- Resource.eval(connRes match { case (_, _, host, port) => logger.info(s"DLQ reprocessor connected to RabbitMQ at $host:$port, consuming from dlx.orders.placed") })
 
       dlqChannel = connRes._2
+      // needs-attention.orders.placed is meant to be empty in steady state, same as
+      // dlx.orders.placed — anything sitting in either is a signal something needs a human.
       _ <- Resource.make(
-        (channelMutex.lock.surround(IO.blocking(dlqChannel.queueDeclarePassive("dlx.orders.placed").getMessageCount))
-          .flatMap(depth => IO.delay(Metrics.dlqDepth.labels("dlx.orders.placed").set(depth.toDouble)))
-          .handleErrorWith(e => logger.warn(e)("Failed to poll dlx.orders.placed depth"))
-          *> IO.sleep(dlqDepthPollInterval)).foreverM.start
+        (List("dlx.orders.placed", "needs-attention.orders.placed").traverse_ { queueName =>
+          channelMutex.lock.surround(IO.blocking(dlqChannel.queueDeclarePassive(queueName).getMessageCount))
+            .flatMap(depth => IO.delay(Metrics.dlqDepth.labels(queueName).set(depth.toDouble)))
+            .handleErrorWith(e => logger.warn(e)(s"Failed to poll $queueName depth"))
+        } *> IO.sleep(dlqDepthPollInterval)).foreverM.start
       )(_.cancel)
 
       fiber <- Resource.make(
