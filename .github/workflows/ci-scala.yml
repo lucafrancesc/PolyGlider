@@ -6,15 +6,17 @@ on:
     paths:
       - "processing-engine-scala/**"
       - "contracts/**"
+      - ".github/workflows/ci-scala.yml"
   pull_request:
     branches: [ "main" ]
     paths:
       - "processing-engine-scala/**"
       - "contracts/**"
+      - ".github/workflows/ci-scala.yml"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -42,3 +44,9 @@ jobs:
         with:
           name: pact-file
           path: contracts/pacts/scala-engine-cs-gateway.json
+
+      - name: Upload dependency graph
+        if: github.event_name != 'workflow_dispatch'
+        uses: scalacenter/sbt-dependency-submission@v3.2.3
+        with:
+          working-directory: processing-engine-scala
