@@ -117,7 +117,13 @@ object RabbitConsumer {
         queueArgs.put("x-dead-letter-exchange", "dlx.orders.exchange")
         ch.queueDeclare("orders.placed", true, false, false, queueArgs)
         ch.queueBind("orders.placed", "orders.exchange", "orders.placed")
-        ch.basicQos(1)
+        // Prefetch must scale with workerCount: a per-consumer prefetch of 1 lets RabbitMQ
+        // deliver only one unacked message at a time regardless of how many worker fibers are
+        // waiting on the internal queue, serializing throughput to one in-flight message no
+        // matter how many fibers are configured (see #70 — this previously meant a Postgres
+        // outage could only ever produce one consecutive failure every ~30s, never enough to
+        // trip the circuit breaker's default threshold within a realistic outage window).
+        ch.basicQos(workerCount)
 
         // One queue per backoff tier: a fixed x-message-ttl delays redelivery, and
         // x-dead-letter-exchange routes the expired message back to the main queue once the
