@@ -86,10 +86,10 @@ class CircuitBreakerSpec extends CatsEffectSuite {
       _       <- IO.sleep(100.millis)
       _       <- breaker.protect(IO.pure("recovered")) // half-open trial succeeds, then closes
       seen    <- events.get
-    } yield assertEquals(seen, List("open", "half-open", "closed"))
+    } yield assertEquals(seen, List("closed", "open", "half-open", "closed"))
   }
 
-  test("onStateChange is not called while consecutive failures stay below the threshold") {
+  test("onStateChange reports the initial closed state but no further transitions below the threshold") {
     for {
       events  <- IO.ref(List.empty[String])
       breaker <- CircuitBreaker.create(
@@ -98,6 +98,6 @@ class CircuitBreakerSpec extends CatsEffectSuite {
                  )
       _       <- breaker.protect(IO.raiseError(boom)).attempt
       seen    <- events.get
-    } yield assertEquals(seen, List.empty[String])
+    } yield assertEquals(seen, List("closed"))
   }
 }
