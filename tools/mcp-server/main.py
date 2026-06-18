@@ -8,8 +8,9 @@ Exposes four tools:
   place_order           — POST to the C# gateway
 
 Environment variables (all optional, defaults shown):
-  POSTGRES_URL   postgresql://postgres:postgres@localhost:5432/polyglider_inventory
-  GATEWAY_URL    http://localhost:5187
+  POSTGRES_URL      postgresql://postgres:postgres@localhost:5432/polyglider_inventory
+  GATEWAY_URL       http://localhost:5187
+  POSTGRES_POOL_MAX 10
 """
 
 import logging
@@ -18,6 +19,7 @@ import os
 import httpx
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
@@ -31,18 +33,33 @@ POSTGRES_URL = os.getenv(
     "postgresql://postgres:postgres@localhost:5432/polyglider_inventory",
 )
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:5187")
+POSTGRES_POOL_MAX = int(os.getenv("POSTGRES_POOL_MAX", "10"))
 
 mcp = FastMCP("polyglider-inventory")
 
+# psycopg2's pool only keeps up to `minconn` idle connections around for reuse — with
+# minconn=0 every putconn() would close the connection and the next call would open a fresh
+# one, which is no pooling at all. minconn=1 means the server needs Postgres reachable at
+# startup (this server has nothing useful to do without it anyway), but actually reuses
+# connections instead of opening one per call.
+_pool = psycopg2.pool.SimpleConnectionPool(minconn=1, maxconn=POSTGRES_POOL_MAX, dsn=POSTGRES_URL)
+
 
 def _get_conn():
-    return psycopg2.connect(POSTGRES_URL)
+    return _pool.getconn()
+
+
+def _put_conn(conn, *, broken: bool = False) -> None:
+    # A connection that errored mid-use may be in an unknown state (e.g. an aborted
+    # transaction); discard it instead of returning it to the pool for reuse.
+    _pool.putconn(conn, close=broken)
 
 
 @mcp.tool()
 def list_inventory() -> list[dict]:
     """Return all SKUs and their current quantities from the inventory ledger."""
     conn = None
+    broken = False
     try:
         conn = _get_conn()
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -50,17 +67,19 @@ def list_inventory() -> list[dict]:
             rows = cur.fetchall()
         return [dict(r) for r in rows]
     except psycopg2.Error as e:
+        broken = True
         logger.error("list_inventory failed: %s", e)
         raise RuntimeError(f"Database error: {e}") from e
     finally:
         if conn:
-            conn.close()
+            _put_conn(conn, broken=broken)
 
 
 @mcp.tool()
 def get_sku_quantity(sku: str) -> dict:
     """Return the current quantity for a single SKU."""
     conn = None
+    broken = False
     try:
         conn = _get_conn()
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -70,17 +89,19 @@ def get_sku_quantity(sku: str) -> dict:
             return {"error": f"SKU '{sku}' not found"}
         return dict(row)
     except psycopg2.Error as e:
+        broken = True
         logger.error("get_sku_quantity failed for sku=%s: %s", sku, e)
         raise RuntimeError(f"Database error: {e}") from e
     finally:
         if conn:
-            conn.close()
+            _put_conn(conn, broken=broken)
 
 
 @mcp.tool()
 def list_recent_events(limit: int = 20) -> list[dict]:
     """Return the most recent processed order events. `limit` is clamped to [1, 1000]."""
     conn = None
+    broken = False
     limit = max(1, min(limit, 1000))
     try:
         conn = _get_conn()
@@ -93,11 +114,12 @@ def list_recent_events(limit: int = 20) -> list[dict]:
             rows = cur.fetchall()
         return [{"event_id": r["event_id"], "processed_at": str(r["processed_at"])} for r in rows]
     except psycopg2.Error as e:
+        broken = True
         logger.error("list_recent_events failed: %s", e)
         raise RuntimeError(f"Database error: {e}") from e
     finally:
         if conn:
-            conn.close()
+            _put_conn(conn, broken=broken)
 
 
 @mcp.tool()
