@@ -12,7 +12,8 @@ builder.Services.AddSingleton(Channel.CreateBounded<OrderPlacedEvent>(new Bounde
 }));
 builder.Services.AddSingleton<IOrderPublisher, ChannelOrderPublisher>();
 builder.Services.AddHostedService<RabbitMqPublisherWorker>();
-builder.Services.AddSingleton<IRabbitMqProbe, RabbitMqProbe>();
+builder.Services.AddSingleton<RabbitMqConnectionStatus>();
+builder.Services.AddSingleton<IRabbitMqConnectionStatus>(sp => sp.GetRequiredService<RabbitMqConnectionStatus>());
 builder.Services.AddHealthChecks().AddCheck<RabbitMqHealthCheck>("rabbitmq");
 
 builder.Services.AddRateLimiter(options =>

@@ -1,47 +1,34 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using RabbitMQ.Client;
 using System.Threading.Channels;
 
-public interface IRabbitMqProbe
+/// <summary>Read-only view of whether RabbitMqPublisherWorker's actual publish connection is up.</summary>
+public interface IRabbitMqConnectionStatus
 {
-    Task<bool> IsReachableAsync(CancellationToken ct = default);
+    bool IsConnected { get; }
 }
 
-public class RabbitMqProbe(IConfiguration configuration) : IRabbitMqProbe
+/// <summary>
+/// Set by RabbitMqPublisherWorker as its connection comes up/down. A plain volatile bool is enough —
+/// there's a single writer (the worker's reconnect loop) and any number of readers (health checks).
+/// </summary>
+public class RabbitMqConnectionStatus : IRabbitMqConnectionStatus
 {
-    public async Task<bool> IsReachableAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(3));
-            var factory = new ConnectionFactory
-            {
-                HostName = configuration["RabbitMQ:Host"] ?? "localhost",
-                Port = int.Parse(configuration["RabbitMQ:Port"] ?? "5672"),
-                UserName = configuration["RabbitMQ:User"] ?? "guest",
-                Password = configuration["RabbitMQ:Password"] ?? "guest",
-            };
-            await using var conn = await factory.CreateConnectionAsync(cts.Token);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    private volatile bool _isConnected;
+    public bool IsConnected => _isConnected;
+    public void SetConnected(bool connected) => _isConnected = connected;
 }
 
-public class RabbitMqHealthCheck(IRabbitMqProbe probe, Channel<OrderPlacedEvent> ch) : IHealthCheck
+public class RabbitMqHealthCheck(IRabbitMqConnectionStatus status, Channel<OrderPlacedEvent> ch) : IHealthCheck
 {
-    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
+    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
     {
         var bufferUsed = ch.Reader.CanCount ? ch.Reader.Count : 0;
         var data = new Dictionary<string, object> { ["bufferUsed"] = bufferUsed };
 
-        if (await probe.IsReachableAsync(ct))
-            return HealthCheckResult.Healthy("ok", data);
+        var result = status.IsConnected
+            ? HealthCheckResult.Healthy("ok", data)
+            : HealthCheckResult.Unhealthy("unreachable", data: data);
 
-        return HealthCheckResult.Unhealthy("unreachable", data: data);
+        return Task.FromResult(result);
     }
 }

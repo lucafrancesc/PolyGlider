@@ -7,9 +7,9 @@ using Xunit;
 
 namespace gateway_api_cs_tests;
 
-public class FakeRabbitMqProbe(bool isReachable) : IRabbitMqProbe
+public class FakeRabbitMqConnectionStatus(bool isConnected) : IRabbitMqConnectionStatus
 {
-    public Task<bool> IsReachableAsync(CancellationToken ct = default) => Task.FromResult(isReachable);
+    public bool IsConnected => isConnected;
 }
 
 public class HealthCheckTests
@@ -21,7 +21,7 @@ public class HealthCheckTests
                 builder.UseSetting("Gateway:ApiKey", apiKey);
             builder.ConfigureServices(services =>
             {
-                services.AddSingleton<IRabbitMqProbe>(new FakeRabbitMqProbe(rabbitReachable));
+                services.AddSingleton<IRabbitMqConnectionStatus>(new FakeRabbitMqConnectionStatus(rabbitReachable));
                 var workerDesc = services.FirstOrDefault(d => d.ImplementationType == typeof(RabbitMqPublisherWorker));
                 if (workerDesc is not null) services.Remove(workerDesc);
             });
