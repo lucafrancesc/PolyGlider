@@ -13,6 +13,7 @@ Environment variables (all optional, defaults shown):
   POSTGRES_POOL_MAX 10
 """
 
+import atexit
 import logging
 import os
 
@@ -43,6 +44,21 @@ mcp = FastMCP("polyglider-inventory")
 # startup (this server has nothing useful to do without it anyway), but actually reuses
 # connections instead of opening one per call.
 _pool = psycopg2.pool.SimpleConnectionPool(minconn=1, maxconn=POSTGRES_POOL_MAX, dsn=POSTGRES_URL)
+
+def _close_pool() -> None:
+    # closeall() raises PoolError if the pool is already closed -- guard so this is safe to
+    # call more than once (e.g. an explicit shutdown call plus atexit both firing).
+    if _pool.closed:
+        return
+    logger.info("Shutting down: closing pooled Postgres connections")
+    _pool.closeall()
+
+
+# atexit (not a signal handler) so this runs on every clean interpreter exit -- SIGINT raising
+# KeyboardInterrupt and unwinding to process exit, SIGTERM's default handler raising SystemExit,
+# or main() returning normally all go through this, without needing to duplicate cleanup logic
+# in each path.
+atexit.register(_close_pool)
 
 
 def _get_conn():

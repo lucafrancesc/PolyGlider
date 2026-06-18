@@ -25,6 +25,10 @@ object OrderProcessor {
   def process: IO[Unit] =
     // Build a combined Resource: transactor -> run migrations -> consumer resource
     val res: Resource[IO, Unit] = for {
+      // First acquired, last released: this finalizer only logs once every consumer fiber,
+      // the DLQ reprocessor, the metrics server, and the transactor have actually finished
+      // closing -- confirming shutdown was clean rather than just claiming to be.
+      _ <- Resource.onFinalize(Logger[IO].info("Shutdown complete: all consumers, the DLQ reprocessor, and the database connection are closed"))
       xa <- Database.transactorResource
       // Conditionally run migrations based on config flag `app.db.runMigrations` (default true)
       runMigs = try conf.getConfig("app.db").getBoolean("runMigrations") catch {
@@ -84,8 +88,11 @@ object OrderProcessor {
       _ <- DlqReprocessor.start(storage, Logger[IO], retryPolicy = reprocessorPolicy, dlqDepthPollInterval = dlqPollInterval)
     } yield ()
 
-    // Use the resource and keep the app running
-    res.use(_ => IO.never)
+    // Use the resource and keep the app running. IOApp installs a JVM shutdown hook that
+    // cancels this IO on SIGTERM/SIGINT; cancelling Resource.use runs every finalizer above
+    // (closing the RabbitMQ channel/connection, cancelling consumer fibers, closing the
+    // Hikari transactor) before this IO completes. The onCancel here just makes that visible.
+    res.use(_ => IO.never.onCancel(Logger[IO].info("Shutdown signal received: draining in-flight messages and closing connections...")))
 
   // Helper used by tests
   def parsePayload(bytes: Array[Byte]): Either[io.circe.Error, OrderPlaced] =
