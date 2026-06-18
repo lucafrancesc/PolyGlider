@@ -49,8 +49,9 @@ def list_inventory() -> list[dict]:
             cur.execute("SELECT sku, qty FROM ledger ORDER BY sku")
             rows = cur.fetchall()
         return [dict(r) for r in rows]
-    except psycopg2.OperationalError as e:
-        return [{"error": f"Database unavailable: {e}"}]
+    except psycopg2.Error as e:
+        logger.error("list_inventory failed: %s", e)
+        raise RuntimeError(f"Database error: {e}") from e
     finally:
         if conn:
             conn.close()
@@ -68,8 +69,9 @@ def get_sku_quantity(sku: str) -> dict:
         if row is None:
             return {"error": f"SKU '{sku}' not found"}
         return dict(row)
-    except psycopg2.OperationalError as e:
-        return {"error": f"Database unavailable: {e}"}
+    except psycopg2.Error as e:
+        logger.error("get_sku_quantity failed for sku=%s: %s", sku, e)
+        raise RuntimeError(f"Database error: {e}") from e
     finally:
         if conn:
             conn.close()
@@ -90,8 +92,9 @@ def list_recent_events(limit: int = 20) -> list[dict]:
             )
             rows = cur.fetchall()
         return [{"event_id": r["event_id"], "processed_at": str(r["processed_at"])} for r in rows]
-    except psycopg2.OperationalError as e:
-        return [{"error": f"Database unavailable: {e}"}]
+    except psycopg2.Error as e:
+        logger.error("list_recent_events failed: %s", e)
+        raise RuntimeError(f"Database error: {e}") from e
     finally:
         if conn:
             conn.close()
