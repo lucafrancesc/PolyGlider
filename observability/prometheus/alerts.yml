@@ -10,6 +10,15 @@ groups:
           summary: "dlx.orders.placed depth above 50 for 2 minutes"
           description: "The DLQ reprocessor isn't draining dlx.orders.placed fast enough, or messages are failing reprocessing repeatedly. Check needs-attention.orders.placed and recent reprocessor logs."
 
+      - alert: NeedsAttentionDepthNonZero
+        expr: polyglider_dlq_depth{queue="needs-attention.orders.placed"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "needs-attention.orders.placed is non-empty"
+          description: "This queue is meant to be empty in steady state — every message in it exhausted the DLQ reprocessor's retry budget or failed permanently on the first attempt and needs manual triage."
+
       - alert: CircuitBreakerOpenTooLong
         expr: polyglider_circuit_breaker_state{name="postgres-write"} == 2
         for: 60s
