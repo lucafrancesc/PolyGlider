@@ -92,11 +92,26 @@ public class RabbitMqPublisherWorker(
         connectionStatus.SetConnected(true);
         onConnected();
 
-        await foreach (var orderEvent in channel.Reader.ReadAllAsync(ct))
+        // Deliberately CancellationToken.None, not ct: StopAsync marks the channel writer
+        // complete instead of cancelling this token, so ReadAllAsync drains whatever was
+        // already buffered and ends normally once empty, rather than throwing immediately and
+        // abandoning orders that were already accepted (202'd to the client) but not yet
+        // published. New writes stop being accepted as soon as TryComplete() runs — Writer.TryWrite
+        // on a completed channel returns false, which ChannelOrderPublisher already turns into a 503.
+        await foreach (var orderEvent in channel.Reader.ReadAllAsync(CancellationToken.None))
         {
             var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(orderEvent, CamelCase));
-            await rabbitChannel.BasicPublishAsync(ExchangeName, RoutingKey, body, ct);
+            await rabbitChannel.BasicPublishAsync(ExchangeName, RoutingKey, body, CancellationToken.None);
             logger.LogInformation("Published to RabbitMQ: eventId={EventId} sku={Sku} qty={Quantity}", orderEvent.EventId, orderEvent.Sku, orderEvent.Quantity);
         }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        var bufferedCount = channel.Reader.CanCount ? channel.Reader.Count : -1;
+        logger.LogInformation("Shutdown requested: draining {BufferedCount} buffered order(s) before exit", bufferedCount);
+        channel.Writer.TryComplete();
+        await base.StopAsync(cancellationToken);
+        logger.LogInformation("Shutdown complete: buffer drained");
     }
 }
