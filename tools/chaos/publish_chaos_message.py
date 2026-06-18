@@ -8,6 +8,7 @@ scenarios have to be injected at the message level instead.
 Usage:
     python3 publish_chaos_message.py malformed
     python3 publish_chaos_message.py duplicate [--event-id UUID] [--copies N]
+    python3 publish_chaos_message.py transient-in-dlx
 """
 import argparse
 import json
@@ -32,8 +33,17 @@ def connection_params() -> pika.ConnectionParameters:
     )
 
 
-def publish(channel: "pika.adapters.blocking_connection.BlockingChannel", body: bytes) -> None:
-    channel.basic_publish(exchange=EXCHANGE, routing_key=ROUTING_KEY, body=body)
+# Must match RetryPolicy.default.maxRetries in RetryPolicy.scala -- the main consumer's own
+# retry budget, not the DLQ reprocessor's separate one.
+MAIN_CONSUMER_MAX_RETRIES = 5
+
+
+def publish(
+    channel: "pika.adapters.blocking_connection.BlockingChannel",
+    body: bytes,
+    properties: "pika.BasicProperties | None" = None,
+) -> None:
+    channel.basic_publish(exchange=EXCHANGE, routing_key=ROUTING_KEY, body=body, properties=properties)
 
 
 def order_payload(event_id: str, sku: str = "CHAOS-SKU", quantity: int = 1) -> bytes:
@@ -55,6 +65,24 @@ def run_malformed(channel) -> None:
     print("Published malformed (unparseable) payload to orders.exchange")
 
 
+def run_transient_in_dlx(channel, sku: str) -> None:
+    # Pre-set x-retry-count to the main consumer's own max -- the next transient failure it
+    # hits (e.g. Postgres unreachable) will see attemptsSoFar >= maxRetries and nack straight
+    # to dlx.orders.placed instead of scheduling another backoff retry. This is the only way to
+    # get a *transient*-reason message into dlx.orders.placed without actually waiting out all
+    # 5 of the main consumer's real backoff tiers (which take minutes).
+    body = order_payload(str(uuid.uuid4()), sku=sku)
+    properties = pika.BasicProperties(headers={"x-retry-count": MAIN_CONSUMER_MAX_RETRIES})
+    publish(channel, body, properties)
+    print(
+        f"Published an order pre-tagged with x-retry-count={MAIN_CONSUMER_MAX_RETRIES} "
+        "(the main consumer's own max). If Postgres is unreachable when this is consumed, "
+        "it nacks straight to dlx.orders.placed with a transient failure reason, instead of "
+        "scheduling another retry -- exercising the DLQ reprocessor's own retry-before-escalate "
+        "path rather than its immediate-escalate path."
+    )
+
+
 def run_duplicate(channel, event_id: str, copies: int) -> None:
     body = order_payload(event_id)
     for i in range(copies):
@@ -71,6 +99,8 @@ def main() -> None:
     dup = sub.add_parser("duplicate")
     dup.add_argument("--event-id", default=str(uuid.uuid4()))
     dup.add_argument("--copies", type=int, default=2)
+    transient = sub.add_parser("transient-in-dlx")
+    transient.add_argument("--sku", default="CHAOS-TRANSIENT-DLX")
     args = parser.parse_args()
 
     connection = pika.BlockingConnection(connection_params())
@@ -80,6 +110,8 @@ def main() -> None:
             run_malformed(channel)
         elif args.scenario == "duplicate":
             run_duplicate(channel, args.event_id, args.copies)
+        elif args.scenario == "transient-in-dlx":
+            run_transient_in_dlx(channel, args.sku)
     finally:
         connection.close()
 
