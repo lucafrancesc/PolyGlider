@@ -10,6 +10,9 @@ public class ChannelOrderPublisher(Channel<OrderPlacedEvent> channel, ILogger<Ch
             return ValueTask.FromResult(false);
         }
 
+        if (channel.Reader.CanCount)
+            GatewayMetrics.BufferUsed.Set(channel.Reader.Count);
+
         logger.LogDebug("Order enqueued in buffer: eventId={EventId} sku={Sku}", orderEvent.EventId, orderEvent.Sku);
         return ValueTask.FromResult(true);
     }

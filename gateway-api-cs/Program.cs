@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,6 +31,8 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+app.UseHttpMetrics();
+app.MapMetrics();
 app.UseRateLimiter();
 
 app.MapHealthChecks("/health", new HealthCheckOptions
@@ -50,11 +53,20 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publisher, ILogger<Program> logger, HttpContext context) =>
 {
     if (string.IsNullOrWhiteSpace(request.Sku))
+    {
+        GatewayMetrics.OrdersRejected.WithLabels("validation").Inc();
         return Results.BadRequest(new { error = "sku is required" });
+    }
     if (request.Sku.Length > 100)
+    {
+        GatewayMetrics.OrdersRejected.WithLabels("validation").Inc();
         return Results.BadRequest(new { error = "sku must be at most 100 characters" });
+    }
     if (request.Quantity <= 0)
+    {
+        GatewayMetrics.OrdersRejected.WithLabels("validation").Inc();
         return Results.BadRequest(new { error = "quantity must be positive" });
+    }
 
     var orderEvent = new OrderPlacedEvent(
         EventId: Guid.NewGuid(),
@@ -68,10 +80,12 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
 
     if (!await publisher.PublishAsync(orderEvent))
     {
+        GatewayMetrics.OrdersRejected.WithLabels("buffer_full").Inc();
         context.Response.Headers.RetryAfter = "1";
         return Results.StatusCode(503);
     }
 
+    GatewayMetrics.OrdersReceived.Inc();
     return Results.Accepted($"/api/orders/{orderEvent.EventId}", new
     {
         message = "Order queued successfully",

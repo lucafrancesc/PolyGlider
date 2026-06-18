@@ -11,3 +11,13 @@ scrape_configs:
       # The Scala consumer runs on the host (sbt run / a packaged jar), not in this
       # compose file, so it's reached through the docker-to-host gateway.
       - targets: ["host.docker.internal:9100"]
+
+  - job_name: gateway-api-cs
+    static_configs:
+      # prometheus-net.AspNetCore exposes /metrics on the same Kestrel port the API
+      # itself listens on -- no separate metrics port, unlike the other two services.
+      - targets: ["host.docker.internal:5187"]
+
+  - job_name: mcp-server
+    static_configs:
+      - targets: ["host.docker.internal:9101"]
