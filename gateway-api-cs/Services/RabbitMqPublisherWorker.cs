@@ -7,6 +7,7 @@ using RabbitMQ.Client;
 public class RabbitMqPublisherWorker(
     Channel<OrderPlacedEvent> channel,
     IConfiguration configuration,
+    RabbitMqConnectionStatus connectionStatus,
     ILogger<RabbitMqPublisherWorker> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -35,6 +36,7 @@ public class RabbitMqPublisherWorker(
             }
             catch (Exception ex)
             {
+                connectionStatus.SetConnected(false);
                 var delay = ReconnectBackoff.Delay(attempt, BaseDelay, BackoffMultiplier, MaxDelay, MaxJitter, Random.Shared);
                 attempt++;
                 logger.LogError(ex, "RabbitMQ connection lost, retrying in {Delay}", delay);
@@ -69,7 +71,25 @@ public class RabbitMqPublisherWorker(
         await using var rabbitChannel = await connection.CreateChannelAsync(cancellationToken: ct);
         await rabbitChannel.ExchangeDeclareAsync(ExchangeName, ExchangeType.Topic, durable: true, cancellationToken: ct);
 
+        // Detect the broker going unresponsive (e.g. missed heartbeats) without waiting for the
+        // next BasicPublishAsync to fail — the health check reads connectionStatus directly
+        // rather than opening its own probe connection. AutomaticRecoveryEnabled (on by default)
+        // means the same IConnection instance can silently reconnect after a shutdown without
+        // ever going through ExecuteAsync's outer catch block, so RecoverySucceededAsync is the
+        // only signal that flips the status back to healthy in that case.
+        connection.ConnectionShutdownAsync += (_, _) =>
+        {
+            connectionStatus.SetConnected(false);
+            return Task.CompletedTask;
+        };
+        connection.RecoverySucceededAsync += (_, _) =>
+        {
+            connectionStatus.SetConnected(true);
+            return Task.CompletedTask;
+        };
+
         logger.LogInformation("Connected to RabbitMQ at {Host}:{Port} (ssl={Ssl})", factory.HostName, factory.Port, ssl);
+        connectionStatus.SetConnected(true);
         onConnected();
 
         await foreach (var orderEvent in channel.Reader.ReadAllAsync(ct))
