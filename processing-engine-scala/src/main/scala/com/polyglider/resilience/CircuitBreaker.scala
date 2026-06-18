@@ -89,5 +89,11 @@ object CircuitBreaker {
     logger: Logger[IO],
     onStateChange: String => IO[Unit] = _ => IO.unit
   ): IO[CircuitBreaker] =
-    Ref[IO].of[BreakerState](BreakerState.Closed(0)).map(new CircuitBreaker(name, _, maxFailures, resetTimeout, logger, onStateChange))
+    for {
+      state   <- Ref[IO].of[BreakerState](BreakerState.Closed(0))
+      breaker  = new CircuitBreaker(name, state, maxFailures, resetTimeout, logger, onStateChange)
+      // Without this, a consumer of onStateChange (e.g. a Prometheus gauge) has no value at all
+      // until the first transition, indistinguishable from the metric being broken.
+      _       <- onStateChange("closed")
+    } yield breaker
 }
