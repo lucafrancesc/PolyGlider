@@ -10,6 +10,7 @@ import com.polyglider.model.OrderPlaced
 import com.polyglider.storage.SkuStorage
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
 import com.polyglider.UuidUtils
+import com.polyglider.metrics.Metrics
 
 import java.nio.charset.StandardCharsets
 import scala.concurrent.duration.DurationLong
@@ -165,6 +166,7 @@ object RabbitConsumer {
                               })
                   // The retry queue now owns redelivery; ack the original so it isn't redelivered too.
                   _        <- ack
+                  _        <- IO.delay(Metrics.retries.inc())
                   _        <- logger.warn(s"Transient failure for eventId=$eventId tag=${d.deliveryTag}; scheduled retry $tier/${retryPolicy.maxRetries} in ~${retryPolicy.delayFor(tier)}")
                 } yield ()
               }
@@ -177,6 +179,7 @@ object RabbitConsumer {
               _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
               _ <- logger.info(s"Stored to ledger: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
               _ <- ack
+              _ <- IO.delay(Metrics.messagesProcessed.inc())
               n <- counter.updateAndGet(_ + 1)
               _ <- if (n % summaryEvery == 0) logSnapshot(storage, logger) else IO.unit
             } yield ()
@@ -185,9 +188,11 @@ object RabbitConsumer {
               val eventId = eventIdOf(d.body)
               ProcessingFailure.classify(err) match {
                 case PermanentFailure(cause) =>
-                  logger.error(cause)(s"Permanent failure processing message eventId=$eventId tag=${d.deliveryTag}; routing to DLX") *> nackToDlx
+                  IO.delay(Metrics.permanentFailures.inc()) *>
+                    logger.error(cause)(s"Permanent failure processing message eventId=$eventId tag=${d.deliveryTag}; routing to DLX") *> nackToDlx
                 case TransientFailure(cause) =>
-                  logger.warn(cause)(s"Transient failure processing message eventId=$eventId tag=${d.deliveryTag}; scheduling backoff retry") *> retryWithBackoff
+                  IO.delay(Metrics.transientFailures.inc()) *>
+                    logger.warn(cause)(s"Transient failure processing message eventId=$eventId tag=${d.deliveryTag}; scheduling backoff retry") *> retryWithBackoff
               }
             }
           }.foreverM.start

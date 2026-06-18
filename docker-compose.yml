@@ -27,6 +27,40 @@ services:
     mem_limit: 512m
     cpus: 1.0
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: polyglider_prometheus
+    ports:
+      - "127.0.0.1:9090:9090" # Prometheus UI (localhost only)
+    volumes:
+      - ./observability/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    # The Scala consumer runs on the host (sbt run), not in this compose file; this lets
+    # Prometheus reach its /metrics endpoint on the host via host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    mem_limit: 256m
+    cpus: 0.5
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: polyglider_grafana
+    ports:
+      - "127.0.0.1:3000:3000" # Grafana UI (localhost only)
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    mem_limit: 256m
+    cpus: 0.5
+
 volumes:
   rabbitmq_data:
   postgres_data:
+  prometheus_data:
+  grafana_data:

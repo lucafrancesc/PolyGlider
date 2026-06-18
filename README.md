@@ -168,6 +168,19 @@ Default credentials are in `.env.example`. Never commit a `.env` file with real 
 
 ---
 
+## Observability
+
+The Scala engine exposes Prometheus metrics on `:9100/metrics` (port configurable via `app.metrics.port` / `METRICS_PORT`): messages processed, transient/permanent failure counts, retry counts, circuit breaker state (`postgres-write`), and `dlx.orders.placed` queue depth (polled every 15s by default, `app.metrics.dlq-poll-interval-ms` / `METRICS_DLQ_POLL_INTERVAL_MS`).
+
+`docker compose up -d` also starts Prometheus and Grafana, provisioned from `observability/`:
+
+- **Prometheus** — http://localhost:9090, scrapes the Scala engine at `host.docker.internal:9100` (config: `observability/prometheus/prometheus.yml`); alert rules in `observability/prometheus/alerts.yml` fire on `DlqDepthHigh` (depth > 50 for 2m) and `CircuitBreakerOpenTooLong` (open > 60s)
+- **Grafana** — http://localhost:3000 (default `admin`/`admin`, override via `GRAFANA_USER`/`GRAFANA_PASSWORD`), pre-loaded with the "PolyGlider Resilience" dashboard (`observability/grafana/dashboards/polyglider-resilience.json`)
+
+The Scala engine itself runs on the host (`sbt run`), not inside `docker-compose.yml`, so Prometheus reaches it through the docker-to-host gateway rather than a compose service name.
+
+---
+
 ## Security
 
 API key auth and rate limiting are both opt-in, configured via environment variables.

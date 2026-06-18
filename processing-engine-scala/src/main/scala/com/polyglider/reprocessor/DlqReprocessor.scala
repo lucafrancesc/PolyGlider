@@ -11,10 +11,11 @@ import com.polyglider.storage.SkuStorage
 import com.polyglider.consumer.{RabbitConsumer, RetryPolicy}
 import com.polyglider.consumer.ProcessingFailure
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
+import com.polyglider.metrics.Metrics
 
 import java.nio.charset.StandardCharsets
 import java.time.Instant
-import scala.concurrent.duration.DurationLong
+import scala.concurrent.duration.{DurationLong, FiniteDuration}
 
 /** Automated DLQ reprocessor.
   *
@@ -81,7 +82,8 @@ object DlqReprocessor {
   def start(
     storage: SkuStorage,
     logger: Logger[IO],
-    retryPolicy: RetryPolicy = defaultRetryPolicy
+    retryPolicy: RetryPolicy = defaultRetryPolicy,
+    dlqDepthPollInterval: FiniteDuration = 15.seconds
   ): Resource[IO, Unit] =
     for {
       queue        <- Resource.eval(Queue.bounded[IO, Delivery](1000))
@@ -138,6 +140,14 @@ object DlqReprocessor {
       })( { case (conn, ch, _, _) => IO.blocking(ch.close()) *> IO.blocking(conn.close()) })
 
       _ <- Resource.eval(connRes match { case (_, _, host, port) => logger.info(s"DLQ reprocessor connected to RabbitMQ at $host:$port, consuming from dlx.orders.placed") })
+
+      dlqChannel = connRes._2
+      _ <- Resource.make(
+        (channelMutex.lock.surround(IO.blocking(dlqChannel.queueDeclarePassive("dlx.orders.placed").getMessageCount))
+          .flatMap(depth => IO.delay(Metrics.dlqDepth.labels("dlx.orders.placed").set(depth.toDouble)))
+          .handleErrorWith(e => logger.warn(e)("Failed to poll dlx.orders.placed depth"))
+          *> IO.sleep(dlqDepthPollInterval)).foreverM.start
+      )(_.cancel)
 
       fiber <- Resource.make(
         queue.take.flatMap { d =>

@@ -74,4 +74,30 @@ class CircuitBreakerSpec extends CatsEffectSuite {
       assert(blocked.left.exists(_.isInstanceOf[CircuitBreakerOpenException]), "must reopen after a failed trial")
     }
   }
+
+  test("onStateChange reports open, half-open, and closed transitions for observability") {
+    for {
+      events  <- IO.ref(List.empty[String])
+      breaker <- CircuitBreaker.create(
+                   "test", maxFailures = 1, resetTimeout = 50.millis, summon[Logger[IO]],
+                   onStateChange = s => events.update(_ :+ s)
+                 )
+      _       <- breaker.protect(IO.raiseError(boom)).attempt // trips open
+      _       <- IO.sleep(100.millis)
+      _       <- breaker.protect(IO.pure("recovered")) // half-open trial succeeds, then closes
+      seen    <- events.get
+    } yield assertEquals(seen, List("open", "half-open", "closed"))
+  }
+
+  test("onStateChange is not called while consecutive failures stay below the threshold") {
+    for {
+      events  <- IO.ref(List.empty[String])
+      breaker <- CircuitBreaker.create(
+                   "test", maxFailures = 3, resetTimeout = 1.minute, summon[Logger[IO]],
+                   onStateChange = s => events.update(_ :+ s)
+                 )
+      _       <- breaker.protect(IO.raiseError(boom)).attempt
+      seen    <- events.get
+    } yield assertEquals(seen, List.empty[String])
+  }
 }
