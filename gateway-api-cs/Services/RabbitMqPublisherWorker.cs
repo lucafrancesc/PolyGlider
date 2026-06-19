@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Security;
 using System.Text;
 using System.Text.Json;
@@ -111,12 +112,25 @@ public class RabbitMqPublisherWorker(
         await foreach (var orderEvent in channel.Reader.ReadAllAsync(CancellationToken.None))
         {
             var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(orderEvent, CamelCase));
+
+            // Re-parent onto the original HTTP request's trace (captured at enqueue time, see
+            // Program.cs) rather than this BackgroundService's own ambient context, so the
+            // gateway's publish span shows up as a child of the request that created the order.
+            using var activity = orderEvent.TraceParent is not null
+                ? GatewayTracing.Source.StartActivity("publish orders.placed", ActivityKind.Producer,
+                    parentContext: ActivityContext.TryParse(orderEvent.TraceParent, orderEvent.TraceState, out var ctx) ? ctx : default)
+                : GatewayTracing.Source.StartActivity("publish orders.placed", ActivityKind.Producer);
+
+            var props = new BasicProperties();
+            if (activity?.Id is not null)
+                props.Headers = new Dictionary<string, object?> { ["traceparent"] = activity.Id };
+
             try
             {
                 // Awaits the broker's confirm (publisherConfirmationsEnabled above) before
                 // returning, so this only completes once RabbitMQ has actually accepted the
                 // message — not merely once it left the local socket buffer.
-                await rabbitChannel.BasicPublishAsync(ExchangeName, RoutingKey, body, CancellationToken.None);
+                await rabbitChannel.BasicPublishAsync(ExchangeName, RoutingKey, mandatory: false, props, body, CancellationToken.None);
             }
             catch (Exception ex)
             {

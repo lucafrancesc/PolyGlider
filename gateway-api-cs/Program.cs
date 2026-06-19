@@ -2,10 +2,21 @@ using System.Threading.Channels;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Prometheus;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// AddAspNetCoreInstrumentation gives us a span per HTTP request for free; the OTLP endpoint
+// defaults to the Jaeger collector wired up in docker-compose.yml / .env.example.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService("gateway-api-cs"))
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddSource(GatewayTracing.SourceName)
+        .AddOtlpExporter(o => o.Endpoint = new Uri(builder.Configuration["Otel:ExporterEndpoint"] ?? "http://localhost:4317")));
 
 builder.Services.AddSingleton(Channel.CreateBounded<OrderPlacedEvent>(new BoundedChannelOptions(10_000)
 {
@@ -87,13 +98,20 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
         return Results.BadRequest(new { error = "quantity must be positive" });
     }
 
+    // Captured now, while the AspNetCore-instrumented request span is still current -- by the
+    // time RabbitMqPublisherWorker dequeues this event the request has already completed and
+    // Activity.Current would be null/unrelated, so the W3C context has to travel with the event.
     var orderEvent = new OrderPlacedEvent(
         EventId: Guid.NewGuid(),
         Sku: request.Sku,
         Quantity: request.Quantity,
         CustomerId: request.CustomerId,
         Timestamp: DateTime.UtcNow
-    );
+    )
+    {
+        TraceParent = System.Diagnostics.Activity.Current?.Id,
+        TraceState = System.Diagnostics.Activity.Current?.TraceStateString
+    };
 
     logger.LogInformation("Order received: sku={Sku} qty={Quantity} eventId={EventId}", request.Sku, request.Quantity, orderEvent.EventId);
 
@@ -118,7 +136,17 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
 app.Run();
 
 public record OrderRequest(string Sku, int Quantity, Guid CustomerId);
-public record OrderPlacedEvent(Guid EventId, string Sku, int Quantity, Guid CustomerId, DateTime Timestamp);
+
+public record OrderPlacedEvent(Guid EventId, string Sku, int Quantity, Guid CustomerId, DateTime Timestamp)
+{
+    // Carries the W3C trace context from the HTTP request to RabbitMqPublisherWorker so it can
+    // be injected into the RabbitMQ message headers. [JsonIgnore] keeps it out of the on-wire
+    // JSON body -- the 5-field event schema is a pact-verified contract with the Scala consumer.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TraceParent { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TraceState { get; init; }
+}
 public record OrderResponse(string Message, Guid EventId);
 public record ErrorResponse(string Error);
 public partial class Program { }

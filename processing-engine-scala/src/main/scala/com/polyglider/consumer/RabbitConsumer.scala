@@ -11,6 +11,8 @@ import com.polyglider.storage.SkuStorage
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
 import com.polyglider.UuidUtils
 import com.polyglider.metrics.Metrics
+import com.polyglider.tracing.Tracing
+import io.opentelemetry.api.trace.{SpanKind, StatusCode}
 
 import java.nio.charset.StandardCharsets
 import scala.concurrent.duration.{DurationLong, FiniteDuration}
@@ -64,6 +66,26 @@ object RabbitConsumer {
       .flatMap(_.as[OrderPlaced])
       .map(_.eventId)
       .getOrElse("unknown")
+
+  /** Starts a span parented onto the trace context carried in the message's `traceparent`
+    * header (injected by the C# gateway at publish time), runs `io` inside it, and always ends
+    * the span -- recording the exception and an ERROR status on failure so it doesn't just
+    * silently end as if it succeeded.
+    */
+  private[polyglider] def withSpan[A](properties: AMQP.BasicProperties)(io: IO[A]): IO[A] =
+    IO.blocking {
+      val parentCtx = Tracing.extract(properties.getHeaders)
+      Tracing.tracer.spanBuilder("process orders.placed")
+        .setParent(parentCtx)
+        .setSpanKind(SpanKind.CONSUMER)
+        .startSpan()
+    }.flatMap { span =>
+      io.guaranteeCase {
+        case Outcome.Succeeded(_) => IO.blocking(span.end())
+        case Outcome.Errored(e)   => IO.blocking { span.recordException(e); span.setStatus(StatusCode.ERROR); span.end() }
+        case Outcome.Canceled()   => IO.blocking { span.setStatus(StatusCode.ERROR, "cancelled"); span.end() }
+      }
+    }
 
   /** Retries `io` with capped exponential backoff + jitter until it succeeds, logging each
     * failure. The initial RabbitMQ connection used to be a single attempt -- if it raced
@@ -221,17 +243,19 @@ object RabbitConsumer {
               }
             }
 
-            val task = for {
-              parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
-              order  <- IO.fromEither(validateUuids(parsed))
-              _ <- logger.info(s"Message received: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
-              _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
-              _ <- logger.info(s"Stored to ledger: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
-              _ <- ack
-              _ <- IO.delay(Metrics.messagesProcessed.inc())
-              n <- counter.updateAndGet(_ + 1)
-              _ <- if (n % summaryEvery == 0) logSnapshot(storage, logger) else IO.unit
-            } yield ()
+            val task = withSpan(d.properties) {
+              for {
+                parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
+                order  <- IO.fromEither(validateUuids(parsed))
+                _ <- logger.info(s"Message received: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
+                _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
+                _ <- logger.info(s"Stored to ledger: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
+                _ <- ack
+                _ <- IO.delay(Metrics.messagesProcessed.inc())
+                n <- counter.updateAndGet(_ + 1)
+                _ <- if (n % summaryEvery == 0) logSnapshot(storage, logger) else IO.unit
+              } yield ()
+            }
 
             task.handleErrorWith { err =>
               val eventId = eventIdOf(d.body)
