@@ -54,6 +54,15 @@ services:
     mem_limit: 128m
     cpus: 0.25
 
+  redis:
+    image: redis:7-alpine
+    container_name: polyglider_redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    # No volume: rate-limit counters are short-lived (1-minute TTL) and fine to lose on restart.
+    mem_limit: 128m
+    cpus: 0.25
+
   gateway:
     build: ./gateway-api-cs
     environment:
@@ -61,8 +70,10 @@ services:
       - RABBITMQ__PORT=5672
       - RABBITMQ__USER=${RABBITMQ_USER:-guest}
       - RABBITMQ__PASSWORD=${RABBITMQ_PASS:-guest}
+      - REDIS__CONNECTIONSTRING=redis:6379
     depends_on:
       - message-broker
+      - redis
     mem_limit: 256m
     cpus: 0.5
 
