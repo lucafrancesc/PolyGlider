@@ -98,4 +98,4 @@ mcp dev main.py
 - `list_inventory` should return rows if the Scala engine has processed at least one order
 - `place_order` requires the C# gateway to be running (`cd gateway-api-cs && dotnet run --project gateway-api-cs.csproj`)
 - If Postgres is down, tools return `{"error": "Database unavailable: ..."}` rather than crashing the session
-- `place_order` does **not** currently send an `X-Api-Key` header — if `GATEWAY__API_KEY` is set on the gateway (see the repo root README's [Security](../../README.md#security) section), `place_order` will get `401` with no way to configure a key on this side yet. Tracked in [#114](https://github.com/lucafrancesc/PolyGlider/issues/114).
+- `place_order` does **not** currently send an `X-Api-Key` header — if `Gateway__ApiKey` is set on the gateway (see the repo root README's [Security](../../README.md#security) section), `place_order` will get `401` with no way to configure a key on this side yet. Tracked in [#114](https://github.com/lucafrancesc/PolyGlider/issues/114).

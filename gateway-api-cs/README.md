@@ -33,7 +33,7 @@ Configuration is read via `IConfiguration`. Override broker settings with enviro
 | `RABBITMQ__PORT` | `5672` |
 | `RABBITMQ__USER` | `guest` |
 | `RABBITMQ__PASSWORD` | `guest` |
-| `GATEWAY__API_KEY` | unset — auth disabled (dev default) |
+| `Gateway__ApiKey` | unset — auth disabled (dev default); no underscore inside `ApiKey` |
 | `GATEWAY__RATELIMITPERMINUTE` | `100` (per client IP, enforced globally via Redis) |
 | `GATEWAY__CHANNELHIGHWATERMARK` | `8000` (of the 10,000 `Channel<T>` capacity) |
 | `REDIS__CONNECTIONSTRING` | `localhost:6379` |

@@ -4,6 +4,8 @@
 **Scenarios:** `tools/chaos/chaos.sh malformed-payload`, `tools/chaos/chaos.sh duplicate-message`
 **Severity:** Low — both paths behaved exactly as designed. Recorded as a postmortem anyway because the timing revealed something worth knowing about the DLQ reprocessor.
 
+**Update (since superseded):** the duplicate-message behavior described below (PK violation → permanent failure → DLX) was intentionally changed by #78, *after* this postmortem was written: the dedup insert is now `ON CONFLICT (event_id) DO NOTHING`, so a duplicate is an idempotent no-op (ledger upsert skipped, message still acks normally) rather than a thrown failure. This doc is left as-is as a historical record of the behavior *at the time*; see #78's description for why it changed, and re-verify against current code/logs before relying on the specifics below.
+
 ## What we did
 
 `tools/chaos/publish_chaos_message.py` publishes directly to `orders.exchange`, bypassing the gateway's input validation (the gateway would reject genuinely malformed input with a `400` before it ever reached the broker, so this is the only way to exercise the Scala consumer's own failure-classification path):

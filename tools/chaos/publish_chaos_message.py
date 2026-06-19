@@ -88,8 +88,9 @@ def run_duplicate(channel, event_id: str, copies: int) -> None:
     for i in range(copies):
         publish(channel, body)
         print(f"Published copy {i + 1}/{copies} with eventId={event_id}")
-    print("First copy should process normally; subsequent copies should hit the "
-          "processed_events unique-constraint violation -> classified Permanent -> DLX.")
+    print("First copy should process normally; subsequent copies should be an idempotent "
+          "no-op (ON CONFLICT DO NOTHING on processed_events -- not a thrown failure), "
+          "acking normally without double-counting the ledger. See #78.")
 
 
 def main() -> None:
