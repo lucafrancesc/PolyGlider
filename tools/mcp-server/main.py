@@ -11,11 +11,14 @@ Environment variables (all optional, defaults shown):
   POSTGRES_URL      postgresql://postgres:postgres@localhost:5432/polyglider_inventory
   GATEWAY_URL       http://localhost:5187
   POSTGRES_POOL_MAX 10
+  METRICS_PORT      9101
 """
 
 import atexit
 import logging
 import os
+import time
+from functools import wraps
 
 import httpx
 import psycopg2
@@ -23,6 +26,7 @@ import psycopg2.extras
 import psycopg2.pool
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from prometheus_client import Counter, Histogram, start_http_server
 
 load_dotenv()
 
@@ -35,8 +39,40 @@ POSTGRES_URL = os.getenv(
 )
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:5187")
 POSTGRES_POOL_MAX = int(os.getenv("POSTGRES_POOL_MAX", "10"))
+METRICS_PORT = int(os.getenv("METRICS_PORT", "9101"))
 
 mcp = FastMCP("polyglider-inventory")
+
+TOOL_CALLS = Counter(
+    "mcp_tool_calls_total", "MCP tool invocations", ["tool", "outcome"]
+)
+TOOL_CALL_DURATION = Histogram(
+    "mcp_tool_call_duration_seconds", "MCP tool call duration in seconds", ["tool"]
+)
+
+
+def track_tool_call(func):
+    """Records call count (by outcome) and duration for an MCP tool function.
+
+    Applied as the innermost decorator (under @mcp.tool()) so it wraps the same plain
+    function FastMCP registers -- @mcp.tool() returns its argument unchanged, it doesn't
+    wrap it, so decoration order here doesn't affect what gets registered.
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.monotonic()
+        outcome = "success"
+        try:
+            return func(*args, **kwargs)
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            TOOL_CALLS.labels(tool=func.__name__, outcome=outcome).inc()
+            TOOL_CALL_DURATION.labels(tool=func.__name__).observe(time.monotonic() - start)
+
+    return wrapper
 
 # psycopg2's pool only keeps up to `minconn` idle connections around for reuse — with
 # minconn=0 every putconn() would close the connection and the next call would open a fresh
@@ -72,6 +108,7 @@ def _put_conn(conn, *, broken: bool = False) -> None:
 
 
 @mcp.tool()
+@track_tool_call
 def list_inventory() -> list[dict]:
     """Return all SKUs and their current quantities from the inventory ledger."""
     conn = None
@@ -92,6 +129,7 @@ def list_inventory() -> list[dict]:
 
 
 @mcp.tool()
+@track_tool_call
 def get_sku_quantity(sku: str) -> dict:
     """Return the current quantity for a single SKU."""
     conn = None
@@ -114,6 +152,7 @@ def get_sku_quantity(sku: str) -> dict:
 
 
 @mcp.tool()
+@track_tool_call
 def list_recent_events(limit: int = 20) -> list[dict]:
     """Return the most recent processed order events. `limit` is clamped to [1, 1000]."""
     conn = None
@@ -139,6 +178,7 @@ def list_recent_events(limit: int = 20) -> list[dict]:
 
 
 @mcp.tool()
+@track_tool_call
 def place_order(sku: str, quantity: int, customer_id: str) -> dict:
     """Place a new order through the C# gateway (POST /api/orders)."""
     payload = {
@@ -167,4 +207,6 @@ def place_order(sku: str, quantity: int, customer_id: str) -> dict:
 
 
 if __name__ == "__main__":
+    start_http_server(METRICS_PORT)
+    logger.info("Prometheus metrics exposed on :%d/metrics", METRICS_PORT)
     mcp.run()

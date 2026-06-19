@@ -171,14 +171,18 @@ Default credentials are in `.env.example`. Never commit a `.env` file with real 
 
 ## Observability
 
-The Scala engine exposes Prometheus metrics on `:9100/metrics` (port configurable via `app.metrics.port` / `METRICS_PORT`): messages processed, transient/permanent failure counts, retry counts, circuit breaker state (`postgres-write`), and `dlx.orders.placed` queue depth (polled every 15s by default, `app.metrics.dlq-poll-interval-ms` / `METRICS_DLQ_POLL_INTERVAL_MS`).
+All three services expose Prometheus metrics:
+
+- **Scala engine** — `:9100/metrics` (port via `app.metrics.port` / `METRICS_PORT`): messages processed, transient/permanent failure counts, retry counts, circuit breaker state (`postgres-write`), and queue depths for `orders.placed` (consumer lag), `dlx.orders.placed`, and `needs-attention.orders.placed` (polled every 15s by default, `app.metrics.dlq-poll-interval-ms` / `METRICS_DLQ_POLL_INTERVAL_MS`)
+- **C# gateway** — `:5187/metrics` (same port the API itself listens on, via `prometheus-net.AspNetCore`): `gateway_orders_received_total`, `gateway_orders_rejected_total{reason}`, `gateway_order_buffer_used`, `gateway_rabbitmq_connected`, plus `http_request_duration_seconds` latency histograms for every route, for free
+- **Python MCP server** — `:9101/metrics` (port via `METRICS_PORT`): `mcp_tool_calls_total{tool,outcome}` and `mcp_tool_call_duration_seconds{tool}`
 
 `docker compose up -d` also starts Prometheus and Grafana, provisioned from `observability/`:
 
-- **Prometheus** — http://localhost:9090, scrapes the Scala engine at `host.docker.internal:9100` (config: `observability/prometheus/prometheus.yml`); alert rules in `observability/prometheus/alerts.yml` fire on `DlqDepthHigh` (depth > 50 for 2m) and `CircuitBreakerOpenTooLong` (open > 60s)
+- **Prometheus** — http://localhost:9090, scrapes all three services at `host.docker.internal:<port>` (config: `observability/prometheus/prometheus.yml`); alert rules in `observability/prometheus/alerts.yml` fire on `DlqDepthHigh` (depth > 50 for 2m) and `CircuitBreakerOpenTooLong` (open > 60s)
 - **Grafana** — http://localhost:3000 (default `admin`/`admin`, override via `GRAFANA_USER`/`GRAFANA_PASSWORD`), pre-loaded with the "PolyGlider Resilience" dashboard (`observability/grafana/dashboards/polyglider-resilience.json`)
 
-The Scala engine itself runs on the host (`sbt run`), not inside `docker-compose.yml`, so Prometheus reaches it through the docker-to-host gateway rather than a compose service name.
+All three services run on the host (`run-all.sh`), not inside `docker-compose.yml`, so Prometheus reaches them through the docker-to-host gateway rather than compose service names. The gateway binds to `0.0.0.0:5187` (not `localhost`) in `Properties/launchSettings.json` specifically so that gateway is reachable — binding to loopback only would make it unreachable from inside the Prometheus container.
 
 ---
 

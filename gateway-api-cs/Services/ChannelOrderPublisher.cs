@@ -21,6 +21,9 @@ public class ChannelOrderPublisher(Channel<OrderPlacedEvent> channel, IConfigura
             return ValueTask.FromResult(PublishOutcome.NearCapacity);
         }
 
+        if (channel.Reader.CanCount)
+            GatewayMetrics.BufferUsed.Set(channel.Reader.Count);
+
         logger.LogDebug("Order enqueued in buffer: eventId={EventId} sku={Sku}", orderEvent.EventId, orderEvent.Sku);
         return ValueTask.FromResult(PublishOutcome.Accepted);
     }
