@@ -20,7 +20,8 @@ Scala Engine (4 worker fibers)
     │   ├─ upsert ledger (sku, qty, order_count)
     │   └─ analytics snapshot every 10 messages
     │
-    ├─ nack (transient / queue full) ──► dlx.orders.placed  (manual triage)
+    ├─ nack (transient / queue full) ──► dlx.orders.placed ──► DlqReprocessor (automated retry)
+    │                                                              └─ exhausted/permanent ──► needs-attention.orders.placed (manual triage)
     └─ ack ──► done
 ```
 
@@ -230,7 +231,7 @@ Key variables:
 | Consumer queue full | Scala engine uses `tryOffer`; a full internal queue (1,000) causes an immediate nack → DLX rather than piling up suspended fibers |
 | RabbitMQ channel thread safety | All `basicAck` / `basicNack` calls across 4 worker fibers are serialised through a `Mutex[IO]` |
 | Consumer processing failure | Scala engine uses manual ack/nack — a failed DB write nacks the message, keeping it off the queue until the engine recovers |
-| Poison-pill messages | Malformed JSON or permanently unprocessable events are nacked without requeue → `dlx.orders.placed` for manual triage |
+| Poison-pill messages | Malformed JSON or permanently unprocessable events are nacked without requeue → `dlx.orders.placed`; `DlqReprocessor` classifies them as permanent and escalates immediately to `needs-attention.orders.placed` for manual triage (transient DLQ failures instead get their own bounded retry budget before escalating — see Design doc below) |
 | Duplicate delivery | `processed_events` table deduplicates by `eventId`; duplicate events are rolled back without touching the ledger |
 | Negative inventory | DB-level `CHECK (qty >= 0)` and `CHECK (order_count >= 0)` constraints on the `ledger` table reject any update that would underflow |
 | Broker / DB unreachable (health) | `GET /health` probes a live RabbitMQ connection and returns `503` when unreachable, enabling load balancers to pull broken instances |
