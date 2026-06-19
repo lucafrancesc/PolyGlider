@@ -37,6 +37,7 @@ public class RabbitMqPublisherWorker(
             catch (Exception ex)
             {
                 connectionStatus.SetConnected(false);
+                GatewayMetrics.RabbitMqConnected.Set(0);
                 var delay = ReconnectBackoff.Delay(attempt, BaseDelay, BackoffMultiplier, MaxDelay, MaxJitter, Random.Shared);
                 attempt++;
                 logger.LogError(ex, "RabbitMQ connection lost, retrying in {Delay}", delay);
@@ -86,16 +87,19 @@ public class RabbitMqPublisherWorker(
         connection.ConnectionShutdownAsync += (_, _) =>
         {
             connectionStatus.SetConnected(false);
+            GatewayMetrics.RabbitMqConnected.Set(0);
             return Task.CompletedTask;
         };
         connection.RecoverySucceededAsync += (_, _) =>
         {
             connectionStatus.SetConnected(true);
+            GatewayMetrics.RabbitMqConnected.Set(1);
             return Task.CompletedTask;
         };
 
         logger.LogInformation("Connected to RabbitMQ at {Host}:{Port} (ssl={Ssl})", factory.HostName, factory.Port, ssl);
         connectionStatus.SetConnected(true);
+        GatewayMetrics.RabbitMqConnected.Set(1);
         onConnected();
 
         // Deliberately CancellationToken.None, not ct: StopAsync marks the channel writer
@@ -124,6 +128,8 @@ public class RabbitMqPublisherWorker(
                 logger.LogError(ex, "Publish not confirmed by RabbitMQ: eventId={EventId} sku={Sku} qty={Quantity}", orderEvent.EventId, orderEvent.Sku, orderEvent.Quantity);
                 throw;
             }
+            if (channel.Reader.CanCount)
+                GatewayMetrics.BufferUsed.Set(channel.Reader.Count);
             logger.LogInformation("Published to RabbitMQ: eventId={EventId} sku={Sku} qty={Quantity}", orderEvent.EventId, orderEvent.Sku, orderEvent.Quantity);
         }
     }

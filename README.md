@@ -20,7 +20,8 @@ Scala Engine (4 worker fibers)
     │   ├─ upsert ledger (sku, qty, order_count)
     │   └─ analytics snapshot every 10 messages
     │
-    ├─ nack (transient / queue full) ──► dlx.orders.placed  (manual triage)
+    ├─ nack (transient / queue full) ──► dlx.orders.placed ──► DlqReprocessor (automated retry)
+    │                                                              └─ exhausted/permanent ──► needs-attention.orders.placed (manual triage)
     └─ ack ──► done
 ```
 
@@ -170,14 +171,18 @@ Default credentials are in `.env.example`. Never commit a `.env` file with real 
 
 ## Observability
 
-The Scala engine exposes Prometheus metrics on `:9100/metrics` (port configurable via `app.metrics.port` / `METRICS_PORT`): messages processed, transient/permanent failure counts, retry counts, circuit breaker state (`postgres-write`), and `dlx.orders.placed` queue depth (polled every 15s by default, `app.metrics.dlq-poll-interval-ms` / `METRICS_DLQ_POLL_INTERVAL_MS`).
+All three services expose Prometheus metrics:
+
+- **Scala engine** — `:9100/metrics` (port via `app.metrics.port` / `METRICS_PORT`): messages processed, transient/permanent failure counts, retry counts, circuit breaker state (`postgres-write`), and queue depths for `orders.placed` (consumer lag), `dlx.orders.placed`, and `needs-attention.orders.placed` (polled every 15s by default, `app.metrics.dlq-poll-interval-ms` / `METRICS_DLQ_POLL_INTERVAL_MS`)
+- **C# gateway** — `:5187/metrics` (same port the API itself listens on, via `prometheus-net.AspNetCore`): `gateway_orders_received_total`, `gateway_orders_rejected_total{reason}`, `gateway_order_buffer_used`, `gateway_rabbitmq_connected`, plus `http_request_duration_seconds` latency histograms for every route, for free
+- **Python MCP server** — `:9101/metrics` (port via `METRICS_PORT`): `mcp_tool_calls_total{tool,outcome}` and `mcp_tool_call_duration_seconds{tool}`
 
 `docker compose up -d` also starts Prometheus and Grafana, provisioned from `observability/`:
 
-- **Prometheus** — http://localhost:9090, scrapes the Scala engine at `host.docker.internal:9100` (config: `observability/prometheus/prometheus.yml`); alert rules in `observability/prometheus/alerts.yml` fire on `DlqDepthHigh` (depth > 50 for 2m) and `CircuitBreakerOpenTooLong` (open > 60s)
+- **Prometheus** — http://localhost:9090, scrapes all three services at `host.docker.internal:<port>` (config: `observability/prometheus/prometheus.yml`); alert rules in `observability/prometheus/alerts.yml` fire on `DlqDepthHigh` (depth > 50 for 2m) and `CircuitBreakerOpenTooLong` (open > 60s)
 - **Grafana** — http://localhost:3000 (default `admin`/`admin`, override via `GRAFANA_USER`/`GRAFANA_PASSWORD`), pre-loaded with the "PolyGlider Resilience" dashboard (`observability/grafana/dashboards/polyglider-resilience.json`)
 
-The Scala engine itself runs on the host (`sbt run`), not inside `docker-compose.yml`, so Prometheus reaches it through the docker-to-host gateway rather than a compose service name.
+All three services run on the host (`run-all.sh`), not inside `docker-compose.yml`, so Prometheus reaches them through the docker-to-host gateway rather than compose service names. The gateway binds to `0.0.0.0:5187` (not `localhost`) in `Properties/launchSettings.json` specifically so that gateway is reachable — binding to loopback only would make it unreachable from inside the Prometheus container.
 
 ---
 
@@ -203,6 +208,14 @@ A fixed-window rate limiter caps `POST /api/orders` at 100 requests per minute b
 GATEWAY__RATELIMITPERMINUTE=200 dotnet run --project gateway-api-cs
 ```
 
+### Backpressure
+
+The gateway also returns `429 Too Many Requests` (with `Retry-After: 1`) when the internal `Channel<T>` buffer is at or above a high-water mark (default 8,000 of the 10,000 capacity, i.e. 80%) or completely full — replacing what used to be a silent drop once the buffer hit capacity. Tune the threshold with:
+
+```bash
+GATEWAY__CHANNELHIGHWATERMARK=5000 dotnet run --project gateway-api-cs
+```
+
 ---
 
 ## Configuration
@@ -215,6 +228,7 @@ Key variables:
 |----------|---------|--------|
 | `GATEWAY__API_KEY` | _(empty — auth disabled)_ | Enables `X-Api-Key` enforcement on `POST /api/orders` |
 | `GATEWAY__RATELIMITPERMINUTE` | `100` | Fixed-window rate limit on `POST /api/orders` |
+| `GATEWAY__CHANNELHIGHWATERMARK` | `8000` | Buffer occupancy at/above which `POST /api/orders` returns `429` instead of `202` |
 | `RABBITMQ__HOST` / `RABBIT_HOST` | `127.0.0.1` | Broker address (C# / Scala env var names differ) |
 | `RABBITMQ__SSL` / `RABBIT_SSL` | `false` | Enable AMQPS on port 5671 |
 | `DB_SSL_MODE` | `disable` | Postgres `sslmode` (e.g. `require`, `verify-full`) |
@@ -226,11 +240,11 @@ Key variables:
 | Risk | Current mitigation |
 |------|-----------|
 | Broker unreachable | Gateway buffers up to 10,000 events in `Channel<T>`; `RabbitMqPublisherWorker` reconnects automatically with 5 s backoff |
-| Buffer full | `POST /api/orders` returns `503` with `Retry-After: 1` — no silent drops |
+| Buffer full / near capacity | `POST /api/orders` returns `429` with `Retry-After: 1` once the buffer hits its high-water mark (default 80%) or is completely full — no silent drops |
 | Consumer queue full | Scala engine uses `tryOffer`; a full internal queue (1,000) causes an immediate nack → DLX rather than piling up suspended fibers |
 | RabbitMQ channel thread safety | All `basicAck` / `basicNack` calls across 4 worker fibers are serialised through a `Mutex[IO]` |
 | Consumer processing failure | Scala engine uses manual ack/nack — a failed DB write nacks the message, keeping it off the queue until the engine recovers |
-| Poison-pill messages | Malformed JSON or permanently unprocessable events are nacked without requeue → `dlx.orders.placed` for manual triage |
+| Poison-pill messages | Malformed JSON or permanently unprocessable events are nacked without requeue → `dlx.orders.placed`; `DlqReprocessor` classifies them as permanent and escalates immediately to `needs-attention.orders.placed` for manual triage (transient DLQ failures instead get their own bounded retry budget before escalating — see Design doc below) |
 | Duplicate delivery | `processed_events` table deduplicates by `eventId`; duplicate events are rolled back without touching the ledger |
 | Negative inventory | DB-level `CHECK (qty >= 0)` and `CHECK (order_count >= 0)` constraints on the `ledger` table reject any update that would underflow |
 | Broker / DB unreachable (health) | `GET /health` probes a live RabbitMQ connection and returns `503` when unreachable, enabling load balancers to pull broken instances |

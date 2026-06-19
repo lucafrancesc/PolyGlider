@@ -11,11 +11,13 @@ public class FakeOrderPublisher : IOrderPublisher
 {
     public List<OrderPlacedEvent> Published { get; } = [];
     public bool AcceptsWrites { get; set; } = true;
-    public ValueTask<bool> PublishAsync(OrderPlacedEvent orderEvent)
+    public bool NearCapacity { get; set; }
+
+    public ValueTask<PublishOutcome> PublishAsync(OrderPlacedEvent orderEvent)
     {
-        if (!AcceptsWrites) return ValueTask.FromResult(false);
+        if (!AcceptsWrites) return ValueTask.FromResult(PublishOutcome.Full);
         Published.Add(orderEvent);
-        return ValueTask.FromResult(true);
+        return ValueTask.FromResult(NearCapacity ? PublishOutcome.NearCapacity : PublishOutcome.Accepted);
     }
 }
 
@@ -166,7 +168,7 @@ public class OrdersEndpointTests
     }
 
     [Fact]
-    public async Task PostOrder_BufferFull_Returns503WithRetryAfterHeader()
+    public async Task PostOrder_BufferFull_Returns429WithRetryAfterHeader()
     {
         var fake = new FakeOrderPublisher { AcceptsWrites = false };
         await using var factory = BuildFactory(fake);
@@ -179,9 +181,29 @@ public class OrdersEndpointTests
             customerId = "22222222-2222-4222-8222-222222222222"
         });
 
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
         Assert.True(response.Headers.Contains("Retry-After"), "Retry-After header must be present");
         Assert.Empty(fake.Published);
+    }
+
+    [Fact]
+    public async Task PostOrder_BufferNearCapacity_Returns429WithRetryAfterHeader()
+    {
+        var fake = new FakeOrderPublisher { NearCapacity = true };
+        await using var factory = BuildFactory(fake);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/orders", new
+        {
+            sku = "TEST-001",
+            quantity = 1,
+            customerId = "22222222-2222-4222-8222-222222222222"
+        });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.True(response.Headers.Contains("Retry-After"), "Retry-After header must be present");
+        // Near-capacity is a warning, not a rejection: the order was still enqueued.
+        Assert.Single(fake.Published);
     }
 
     [Fact]

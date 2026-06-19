@@ -1,5 +1,12 @@
+public enum PublishOutcome
+{
+    Accepted,
+    NearCapacity,
+    Full
+}
+
 public interface IOrderPublisher
 {
-    /// <summary>Returns true if the event was queued, false if the buffer is full.</summary>
-    ValueTask<bool> PublishAsync(OrderPlacedEvent orderEvent);
+    /// <summary>Queues the event for publishing. See <see cref="PublishOutcome"/> for the possible results.</summary>
+    ValueTask<PublishOutcome> PublishAsync(OrderPlacedEvent orderEvent);
 }

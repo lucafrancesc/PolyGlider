@@ -13,7 +13,7 @@ import com.polyglider.UuidUtils
 import com.polyglider.metrics.Metrics
 
 import java.nio.charset.StandardCharsets
-import scala.concurrent.duration.DurationLong
+import scala.concurrent.duration.{DurationLong, FiniteDuration}
 
 object RabbitConsumer {
   private val RetryCountHeader = "x-retry-count"
@@ -83,7 +83,8 @@ object RabbitConsumer {
     workerCount: Int = 4,
     queueSize: Int = 1000,
     summaryEvery: Long = 10,
-    retryPolicy: RetryPolicy = RetryPolicy.default
+    retryPolicy: RetryPolicy = RetryPolicy.default,
+    queueDepthPollInterval: FiniteDuration = 15.seconds
   ): Resource[IO, Unit] =
     for {
       queue      <- Resource.eval(Queue.bounded[IO, Delivery](queueSize))
@@ -149,6 +150,18 @@ object RabbitConsumer {
       })( { case (conn, ch, _, _) => IO.blocking(ch.close()) *> IO.blocking(conn.close()) })
 
       _ <- Resource.eval(connRes match { case (_, _, host, port) => logger.info(s"Connected to RabbitMQ at $host:$port, consuming from orders.placed") })
+
+      mainChannel = connRes._2
+      // Consumer-lag proxy: how many messages are sitting in orders.placed waiting to be
+      // delivered. Unlike dlx.orders.placed/needs-attention.orders.placed (which should be
+      // near-zero in steady state), this one is expected to fluctuate with normal traffic --
+      // it's useful as a rate-of-change/trend signal rather than a fixed alert threshold.
+      _ <- Resource.make(
+        (channelMutex.lock.surround(IO.blocking(mainChannel.queueDeclarePassive("orders.placed").getMessageCount))
+          .flatMap(depth => IO.delay(Metrics.dlqDepth.labels("orders.placed").set(depth.toDouble)))
+          .handleErrorWith(e => logger.warn(e)("Failed to poll orders.placed depth"))
+          *> IO.sleep(queueDepthPollInterval)).foreverM.start
+      )(_.cancel)
 
       fibers <- Resource.make(
         List.fill(workerCount)(
