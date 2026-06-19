@@ -2,6 +2,8 @@
 
 A polyglot, event-driven order-processing system built to demonstrate how multiple language runtimes can collaborate over a shared message broker. An HTTP gateway (C#) accepts orders and a processing engine (Scala) maintains a ledger in Postgres — all wired together through RabbitMQ.
 
+Spanning three languages is a deliberate teaching choice, not a production recommendation — see [`docs/architecture.md`](docs/architecture.md) for what concept each language's role is meant to illustrate, and why the supporting infrastructure (RabbitMQ, Postgres, Redis, nginx, Prometheus, Grafana, Jaeger) exists to make those three lessons runnable and observable locally rather than being a fourth concept in its own right.
+
 ```
 HTTP client
     │
