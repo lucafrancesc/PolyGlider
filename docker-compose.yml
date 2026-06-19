@@ -10,6 +10,11 @@ services:
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-guest}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS:-guest}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     mem_limit: 512m
     cpus: 1.0
 
@@ -107,9 +112,12 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
       - OTEL_SERVICE_NAME=processing-engine-scala
     depends_on:
-      - message-broker
-      - postgres
-      - jaeger
+      message-broker:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+      jaeger:
+        condition: service_started
     mem_limit: 512m
     cpus: 1.0
 
