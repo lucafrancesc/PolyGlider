@@ -55,8 +55,10 @@ Press `Ctrl+C` to stop everything. The script waits for RabbitMQ and Postgres to
 **Or run the full stack containerized**, with nginx load-balancing across multiple gateway replicas:
 
 ```bash
-docker compose up -d --build --scale gateway=3
+docker compose --profile containerized up -d --build --scale gateway=3
 ```
+
+`gateway`, `engine`, and `nginx` sit behind the `containerized` Compose profile, so a plain `docker compose up -d` (as used by `./run-all.sh` and the "Start RabbitMQ and Postgres" step above) only brings up shared infrastructure (RabbitMQ, Postgres, Redis, Prometheus, Grafana) and never starts these containerized app services alongside the host-based ones `run-all.sh` starts itself.
 
 nginx (`nginx/nginx.conf`) is the **only** externally-exposed entry point in this mode — at http://localhost:80 — and round-robins across however many `gateway` replicas exist. It re-resolves the `gateway` hostname against Docker's embedded DNS every 10s (`resolver` + the `resolve` parameter on the upstream `server`), so scaling up or down is picked up automatically without restarting nginx. It has no active health-check directive though (an nginx Plus feature) — a dead replica is only routed around passively, after a request to it has already failed.
 
