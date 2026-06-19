@@ -122,15 +122,15 @@ HTTP client
     → Postgres ledger (upsert on sku + order_count)
 ```
 
-**Failed messages** (nack without requeue from Scala consumer) route to `dlx.orders.exchange` → `dlx.orders.placed` for manual triage.
+**Failed messages** (nack without requeue from Scala consumer) route to `dlx.orders.exchange` → `dlx.orders.placed`, where `DlqReprocessor` retries transient failures with its own bounded budget and escalates exhausted/permanent failures to `needs-attention.orders.placed` for manual triage — see `docs/resilience-design-doc.md` and `docs/runbook/` for the full failure-handling picture.
 
 ### C# gateway internals
 
 - `Program.cs` — minimal API entrypoint; registers DI and maps `POST /api/orders`
-- `Services/IOrderPublisher` — abstraction injected into the endpoint (enables mocking in tests)
-- `Services/ChannelOrderPublisher` — writes to the `Channel<OrderPlacedEvent>` (non-blocking, drops on full)
-- `Services/RabbitMqPublisherWorker` — `BackgroundService` that drains the channel and publishes to RabbitMQ with camelCase JSON serialization and 5s reconnect backoff
-- Input validation: `sku` must be non-empty, `quantity` must be positive; both return HTTP 400
+- `Services/IOrderPublisher` — abstraction injected into the endpoint (enables mocking in tests); `PublishAsync` returns a `PublishOutcome` (`Accepted` / `NearCapacity` / `Full`), not a `bool` — `NearCapacity` and `Full` both map to HTTP `429` with `Retry-After: 1`
+- `Services/ChannelOrderPublisher` — writes to the `Channel<OrderPlacedEvent>` (non-blocking, drops on full); also signals `NearCapacity` once the buffer is at/above `Gateway:ChannelHighWaterMark` (default 8,000 of the 10,000 capacity)
+- `Services/RabbitMqPublisherWorker` — `BackgroundService` that drains the channel and publishes to RabbitMQ with camelCase JSON serialization, publisher confirms (`CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true)` — a nack or unconfirmed publish throws and triggers reconnect-with-backoff rather than logging a false success), and exponential reconnect backoff
+- Input validation: `sku` must be non-empty (max 100 chars), `quantity` must be positive; both return HTTP 400
 
 ### Scala engine internals
 
@@ -148,3 +148,14 @@ HTTP client
 ```
 
 The gateway generates `eventId` and `timestamp`; clients only send `sku`, `quantity`, `customerId`.
+
+---
+
+## Design docs, ADRs, postmortems, and runbooks
+
+Reference these before re-deriving a design rationale from scratch — most resilience decisions are already documented:
+
+- `docs/adr/` — one-page Architecture Decision Records (Status/Context/Options considered/Decision/Consequences) for the major design choices: RabbitMQ vs Kafka, `processed_events` dedup, the in-process `Channel` buffer, transient/permanent failure classification, circuit breaker thresholds
+- `docs/resilience-design-doc.md` — short design doc covering backoff strategy, circuit breaker thresholds, classification rules, and the DLQ reprocessor's retry-before-escalation count, with the options considered for each
+- `docs/postmortems/` — chaos-testing postmortems (`tools/chaos/`) with measured, live-tested behavior — several of these informed the ADRs and design doc above, e.g. the circuit breaker's real-world tripping latency turning out to be ~150s rather than near-instant under the original `basicQos(1)` prefetch setting
+- `docs/runbook/` — Symptoms/Diagnosis/Remediation/Verification entries for DLQ depth climbing, circuit breaker open, RabbitMQ broker unreachable, malformed payload in DLQ, and duplicate message storm; links the Grafana "PolyGlider Resilience" dashboard panels and Prometheus alert names in `observability/`
