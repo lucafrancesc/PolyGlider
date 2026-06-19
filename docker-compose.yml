@@ -42,6 +42,34 @@ services:
     mem_limit: 256m
     cpus: 0.5
 
+  gateway:
+    build: ./gateway-api-cs
+    environment:
+      - RABBITMQ__HOST=message-broker
+      - RABBITMQ__PORT=5672
+      - RABBITMQ__USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ__PASSWORD=${RABBITMQ_PASS:-guest}
+    depends_on:
+      - message-broker
+    mem_limit: 256m
+    cpus: 0.5
+
+  engine:
+    build: ./processing-engine-scala
+    environment:
+      - RABBIT_HOST=message-broker
+      - RABBIT_PORT=5672
+      - RABBIT_USER=${RABBITMQ_USER:-guest}
+      - RABBIT_PASS=${RABBITMQ_PASS:-guest}
+      - DB_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-polyglider_inventory}
+      - DB_USER=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    depends_on:
+      - message-broker
+      - postgres
+    mem_limit: 512m
+    cpus: 1.0
+
   grafana:
     image: grafana/grafana:11.3.0
     container_name: polyglider_grafana

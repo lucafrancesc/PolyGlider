@@ -8,15 +8,16 @@ rule_files:
 scrape_configs:
   - job_name: processing-engine-scala
     static_configs:
-      # The Scala consumer runs on the host (sbt run / a packaged jar), not in this
-      # compose file, so it's reached through the docker-to-host gateway.
-      - targets: ["host.docker.internal:9100"]
+      # Two run modes coexist: host.docker.internal:9100 covers the host-based
+      # `sbt run` (run-all.sh); engine:9100 covers the containerized `engine` service.
+      - targets: ["host.docker.internal:9100", "engine:9100"]
 
   - job_name: gateway-api-cs
     static_configs:
-      # prometheus-net.AspNetCore exposes /metrics on the same Kestrel port the API
-      # itself listens on -- no separate metrics port, unlike the other two services.
-      - targets: ["host.docker.internal:5187"]
+      # prometheus-net.AspNetCore exposes /metrics on the same port the API itself
+      # listens on -- host.docker.internal:5187 for the host-based run-all.sh process,
+      # gateway:8080 for the containerized `gateway` service.
+      - targets: ["host.docker.internal:5187", "gateway:8080"]
 
   - job_name: mcp-server
     static_configs:
