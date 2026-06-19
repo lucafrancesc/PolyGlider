@@ -3,8 +3,11 @@
 The ingestion gateway is the HTTP front-door of the system. It accepts `POST /api/orders` requests, validates the payload, and hands the event off to an in-process channel so the HTTP response is never blocked by broker availability.
 
 **How it works:**
-1. The HTTP handler validates `sku` (non-empty) and `quantity` (positive), then writes an `OrderPlacedEvent` to a bounded `Channel<T>` (capacity 10,000) and immediately returns `202 Accepted`.
-2. `RabbitMqPublisherWorker` (a `BackgroundService`) drains the channel and publishes events to `orders.exchange` on RabbitMQ with camelCase JSON serialization. If the connection drops it retries every 5 seconds.
+1. The request passes through `RedisRateLimitFilter` (global, Redis-backed rate limit) and `ApiKeyFilter` (opt-in `X-Api-Key` check) before the handler runs — see [Security](../README.md#security) at the repo root for both.
+2. The HTTP handler validates `sku` (non-empty) and `quantity` (positive), then writes an `OrderPlacedEvent` to a bounded `Channel<T>` (capacity 10,000) and immediately returns `202 Accepted`.
+3. `RabbitMqPublisherWorker` (a `BackgroundService`) drains the channel and publishes events to `orders.exchange` on RabbitMQ with camelCase JSON serialization. If the connection drops it retries every 5 seconds.
+
+Also exposes Swagger UI at `/swagger` and Prometheus metrics at `/metrics` — see the repo root README's [API docs](../README.md#api-docs) and [Observability](../README.md#observability) sections.
 
 ---
 
@@ -30,6 +33,13 @@ Configuration is read via `IConfiguration`. Override broker settings with enviro
 | `RABBITMQ__PORT` | `5672` |
 | `RABBITMQ__USER` | `guest` |
 | `RABBITMQ__PASSWORD` | `guest` |
+| `GATEWAY__API_KEY` | unset — auth disabled (dev default) |
+| `GATEWAY__RATELIMITPERMINUTE` | `100` (per client IP, enforced globally via Redis) |
+| `GATEWAY__CHANNELHIGHWATERMARK` | `8000` (of the 10,000 `Channel<T>` capacity) |
+| `REDIS__CONNECTIONSTRING` | `localhost:6379` |
+| `OTEL__EXPORTERENDPOINT` | `http://localhost:4317` (Jaeger OTLP) |
+
+See the repo root README's [Security](../README.md#security), [Observability](../README.md#observability), and [Configuration](../README.md#configuration) sections for what each of these does and why.
 
 ---
 
@@ -38,7 +48,9 @@ Configuration is read via `IConfiguration`. Override broker settings with enviro
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/orders` | Place an order |
-| `GET` | `/health` | Returns `{"status":"healthy","bufferAvailable":true/false}` |
+| `GET` | `/health` | `200 {"status":"healthy","rabbitmq":"ok","bufferUsed":<n>}` / `503 {"status":"unhealthy","rabbitmq":"unreachable","bufferUsed":<n>}` |
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/swagger` | Swagger UI |
 
 **Example:**
 ```bash

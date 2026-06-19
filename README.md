@@ -4,6 +4,8 @@ A polyglot, event-driven order-processing system built to demonstrate how multip
 
 Spanning three languages is a deliberate teaching choice, not a production recommendation — see [`docs/architecture.md`](docs/architecture.md) for what concept each language's role is meant to illustrate, and why the supporting infrastructure (RabbitMQ, Postgres, Redis, nginx, Prometheus, Grafana, Jaeger) exists to make those three lessons runnable and observable locally rather than being a fourth concept in its own right.
 
+Two other docs worth knowing about: [`docs/technical-overview.md`](docs/technical-overview.md) (an engineer-facing map of the full request lifecycle and where to find deeper rationale for any given piece) and [`docs/overview-for-stakeholders.md`](docs/overview-for-stakeholders.md) (the same system explained without jargon, for a non-technical reader).
+
 ```
 HTTP client
     │
