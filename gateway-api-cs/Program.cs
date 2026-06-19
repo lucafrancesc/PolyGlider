@@ -66,10 +66,11 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
 
     logger.LogInformation("Order received: sku={Sku} qty={Quantity} eventId={EventId}", request.Sku, request.Quantity, orderEvent.EventId);
 
-    if (!await publisher.PublishAsync(orderEvent))
+    var outcome = await publisher.PublishAsync(orderEvent);
+    if (outcome is PublishOutcome.Full or PublishOutcome.NearCapacity)
     {
         context.Response.Headers.RetryAfter = "1";
-        return Results.StatusCode(503);
+        return Results.StatusCode(429);
     }
 
     return Results.Accepted($"/api/orders/{orderEvent.EventId}", new
