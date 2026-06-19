@@ -18,7 +18,7 @@ object Database {
   }
 
   def transactorResource: Resource[IO, HikariTransactor[IO]] = for {
-    ec <- ExecutionContexts.fixedThreadPool[IO](32)
+    ec <- ExecutionContexts.fixedThreadPool[IO](conf.getInt("pool-size"))
     xa <- HikariTransactor.newHikariTransactor[IO](
       "org.postgresql.Driver",
       jdbcUrl,

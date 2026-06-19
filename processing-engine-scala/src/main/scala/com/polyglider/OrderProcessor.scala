@@ -34,6 +34,8 @@ object OrderProcessor {
       runMigs = try conf.getConfig("app.db").getBoolean("runMigrations") catch {
         case _: Exception => true
       }
+      // Flyway takes a Postgres advisory lock for the duration of migrate(), so concurrent
+      // migration attempts from multiple engine replicas are safe by default -- no code change needed.
       _ <- Resource.eval(
         if runMigs then Database.runMigrations() *> Logger[IO].info("Flyway migrations executed")
         else Logger[IO].info("Skipping Flyway migrations (app.db.runMigrations=false)")
