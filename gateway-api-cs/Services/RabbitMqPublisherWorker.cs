@@ -69,7 +69,13 @@ public class RabbitMqPublisherWorker(
         };
 
         await using var connection = await factory.CreateConnectionAsync(ct);
-        await using var rabbitChannel = await connection.CreateChannelAsync(cancellationToken: ct);
+        // Publisher confirms: without these, BasicPublishAsync only confirms the bytes were
+        // handed to the local TCP stack, not that RabbitMQ received or routed them — a paused
+        // or unreachable broker would still produce a "Published to RabbitMQ" log line and a
+        // 202 to the caller. With confirms enabled and tracked, BasicPublishAsync itself awaits
+        // the broker's ack and throws if the message is nacked or the channel closes first.
+        var channelOptions = new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true);
+        await using var rabbitChannel = await connection.CreateChannelAsync(channelOptions, cancellationToken: ct);
         await rabbitChannel.ExchangeDeclareAsync(ExchangeName, ExchangeType.Topic, durable: true, cancellationToken: ct);
 
         // Detect the broker going unresponsive (e.g. missed heartbeats) without waiting for the
@@ -105,7 +111,23 @@ public class RabbitMqPublisherWorker(
         await foreach (var orderEvent in channel.Reader.ReadAllAsync(CancellationToken.None))
         {
             var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(orderEvent, CamelCase));
-            await rabbitChannel.BasicPublishAsync(ExchangeName, RoutingKey, body, CancellationToken.None);
+            try
+            {
+                // Awaits the broker's confirm (publisherConfirmationsEnabled above) before
+                // returning, so this only completes once RabbitMQ has actually accepted the
+                // message — not merely once it left the local socket buffer.
+                await rabbitChannel.BasicPublishAsync(ExchangeName, RoutingKey, body, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // A nack or an unconfirmed publish (e.g. the broker is paused/unreachable) is a
+                // publish failure, not a connection-level error we can retry in place — surface
+                // it the same way a dropped connection would be: rethrow so ExecuteAsync's catch
+                // reconnects with backoff. The order itself is already gone from the buffer at
+                // this point (pre-existing limitation shared with connection failures, see #42).
+                logger.LogError(ex, "Publish not confirmed by RabbitMQ: eventId={EventId} sku={Sku} qty={Quantity}", orderEvent.EventId, orderEvent.Sku, orderEvent.Quantity);
+                throw;
+            }
             if (channel.Reader.CanCount)
                 GatewayMetrics.BufferUsed.Set(channel.Reader.Count);
             logger.LogInformation("Published to RabbitMQ: eventId={EventId} sku={Sku} qty={Quantity}", orderEvent.EventId, orderEvent.Sku, orderEvent.Quantity);
