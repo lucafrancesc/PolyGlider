@@ -7,7 +7,7 @@ Injects one of five failure scenarios into a running PolyGlider stack:
 | `postgres-kill` | Stops `polyglider_db` for N seconds, then restarts it | Circuit breaker open → half-open → closed; consumer's transient-failure retry path |
 | `broker-delay` | Pauses `polyglider_broker` for N seconds, then unpauses | Gateway reconnect/buffer behaviour; consumer redelivery on resume |
 | `malformed-payload` | Publishes an unparseable body straight to `orders.exchange`, bypassing the gateway's input validation | Permanent-failure classification → DLX routing |
-| `duplicate-message` | Publishes the same `eventId` twice straight to `orders.exchange` | `processed_events` dedup → second copy permanent-fails → DLX |
+| `duplicate-message` | Publishes the same `eventId` twice straight to `orders.exchange` | `processed_events` dedup — second copy is an idempotent no-op (`ON CONFLICT DO NOTHING`, not a thrown failure), acks normally, ledger is not double-counted (see #78) |
 | `dlq-reprocessor-retry` | Stops `polyglider_db`, publishes a message pre-tagged to land straight in `dlx.orders.placed` with a *transient* reason, then restarts `polyglider_db` after N seconds | `DlqReprocessor`'s own bounded retry-before-escalate path (separate budget from the main consumer's), not just its immediate-escalate path for permanent failures |
 
 ## Setup

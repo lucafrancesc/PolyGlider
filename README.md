@@ -215,7 +215,7 @@ All three services expose Prometheus metrics:
 
 `docker compose up -d` also starts Prometheus and Grafana, provisioned from `observability/`:
 
-- **Prometheus** — http://localhost:9090, scrapes all three services at `host.docker.internal:<port>` (config: `observability/prometheus/prometheus.yml`); alert rules in `observability/prometheus/alerts.yml` fire on `DlqDepthHigh` (depth > 50 for 2m) and `CircuitBreakerOpenTooLong` (open > 60s)
+- **Prometheus** — http://localhost:9090, scrapes all three services at `host.docker.internal:<port>` (config: `observability/prometheus/prometheus.yml`); alert rules in `observability/prometheus/alerts.yml` fire on `DlqDepthHigh` (depth > 50 for 2m), `NeedsAttentionDepthNonZero` (`needs-attention.orders.placed` non-empty for 5m — that queue is meant to be empty in steady state), and `CircuitBreakerOpenTooLong` (open > 60s)
 - **Grafana** — http://localhost:3000 (default `admin`/`admin`, override via `GRAFANA_USER`/`GRAFANA_PASSWORD`), pre-loaded with the "PolyGlider Resilience" dashboard (`observability/grafana/dashboards/polyglider-resilience.json`)
 
 All three services run on the host (`run-all.sh`), not inside `docker-compose.yml`, so Prometheus reaches them through the docker-to-host gateway rather than compose service names. The gateway binds to `0.0.0.0:5187` (not `localhost`) in `Properties/launchSettings.json` specifically so that gateway is reachable — binding to loopback only would make it unreachable from inside the Prometheus container.
@@ -240,10 +240,10 @@ API key auth and rate limiting are both opt-in, configured via environment varia
 
 ### API key auth
 
-Set `GATEWAY__API_KEY` (or `appsettings.json` key `Gateway:ApiKey`) to a non-empty value to enable:
+Set `Gateway__ApiKey` (double underscore is ASP.NET Core's section separator; this binds to the `appsettings.json` key `Gateway:ApiKey` — note **no** underscore inside `ApiKey` itself, unlike most of this project's other env vars) to a non-empty value to enable:
 
 ```bash
-GATEWAY__API_KEY=my-secret dotnet run --project gateway-api-cs
+Gateway__ApiKey=my-secret dotnet run --project gateway-api-cs
 ```
 
 When enabled, every `POST /api/orders` request must include `X-Api-Key: <value>` — missing or wrong keys return `401`. The `/health` endpoint is never gated.
@@ -278,7 +278,7 @@ Key variables:
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `GATEWAY__API_KEY` | _(empty — auth disabled)_ | Enables `X-Api-Key` enforcement on `POST /api/orders` |
+| `Gateway__ApiKey` | _(empty — auth disabled)_ | Enables `X-Api-Key` enforcement on `POST /api/orders` |
 | `GATEWAY__RATELIMITPERMINUTE` | `100` | Global (Redis-backed) per-client-IP rate limit on `POST /api/orders` |
 | `REDIS__CONNECTIONSTRING` | `localhost:6379` | Redis instance backing the rate limiter |
 | `GATEWAY__CHANNELHIGHWATERMARK` | `8000` | Buffer occupancy at/above which `POST /api/orders` returns `429` instead of `202` |
