@@ -7,7 +7,13 @@ namespace gateway_api_cs_tests;
 [Trait("Category", "Integration")]
 public class PublisherConfirmsTests : IAsyncLifetime
 {
-    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder().Build();
+    private const string RabbitUser = "guest";
+    private const string RabbitPass = "guest";
+
+    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder()
+        .WithUsername(RabbitUser)
+        .WithPassword(RabbitPass)
+        .Build();
 
     public Task InitializeAsync() => _rabbitMq.StartAsync();
     public Task DisposeAsync() => _rabbitMq.DisposeAsync().AsTask();
@@ -26,6 +32,8 @@ public class PublisherConfirmsTests : IAsyncLifetime
         {
             HostName = _rabbitMq.Hostname,
             Port = _rabbitMq.GetMappedPublicPort(5672),
+            UserName = RabbitUser,
+            Password = RabbitPass,
         };
         await using var conn = await connFactory.CreateConnectionAsync();
 
