@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Prometheus;
@@ -33,6 +34,19 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+// The gateway has no host-exposed port (see docker-compose.yml) -- nginx is the only way in,
+// so trusting forwarded headers from any peer is safe here rather than enumerating the
+// compose network's subnet, which Docker assigns dynamically. Without this, every request
+// appears to originate from nginx's container IP, which would break per-client behavior
+// (e.g. the planned Redis rate limiter keying on client IP).
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+forwardedHeadersOptions.KnownNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
 
 app.UseHttpMetrics();
 app.MapMetrics();

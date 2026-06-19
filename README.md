@@ -52,6 +52,16 @@ Press `Ctrl+C` to stop everything. The script waits for RabbitMQ and Postgres to
 
 **Or start services individually** — see each component's README.
 
+**Or run the full stack containerized**, with nginx load-balancing across multiple gateway replicas:
+
+```bash
+docker compose up -d --build --scale gateway=3
+```
+
+nginx (`nginx/nginx.conf`) is the **only** externally-exposed entry point in this mode — at http://localhost:80 — and round-robins across however many `gateway` replicas exist. It re-resolves the `gateway` hostname against Docker's embedded DNS every 10s (`resolver` + the `resolve` parameter on the upstream `server`), so scaling up or down is picked up automatically without restarting nginx. It has no active health-check directive though (an nginx Plus feature) — a dead replica is only routed around passively, after a request to it has already failed.
+
+This mode is a separate code path from `./run-all.sh`, which always starts exactly one gateway instance directly on `:5187`, bypassing nginx entirely. The two are not meant to be run side by side.
+
 ---
 
 ## Test
@@ -117,7 +127,7 @@ Swagger UI is at http://localhost:5187/swagger — generated live from the route
 
 This is **not** the same artifact as `contracts/order-api.json`: that hand-maintained JSON Schema (strict `additionalProperties: false`) is the contract-test source of truth, validated in `OrderApiSchemaTests.cs`. Swagger can drift if a route changes without updating its `.Produces<T>()` annotations; the JSON Schema cannot drift silently because the contract test fails. Neither is generated from the other.
 
-When the nginx load balancer lands (tracked separately), it will need a `location /swagger` passthrough to the gateway so Swagger UI stays reachable through it rather than only on the gateway's direct port.
+In the containerized stack, nginx (`nginx/nginx.conf`) proxies every path to the gateway upstream — including `/swagger` — so Swagger UI is also reachable at http://localhost/swagger, not just on the gateway's direct port.
 
 ---
 
