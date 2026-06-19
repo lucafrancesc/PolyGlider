@@ -109,11 +109,13 @@ Config via env vars (defaults work with `docker-compose up -d`):
 
 ## Architecture
 
-The system is a polyglot pub/sub pipeline:
+The system is a polyglot pub/sub pipeline. Why it spans three languages (and what each one is meant to teach) is covered in `docs/architecture.md`, not here — this section is the technical shape, not the rationale.
 
 ```
 HTTP client
-    → POST /api/orders (C# gateway, :5187)
+    → nginx (containerized run mode only, :80) — load-balances across gateway replicas
+    → POST /api/orders (C# gateway, :5187 host mode / no host port in containerized mode)
+    → RedisRateLimitFilter (global rate limit, Redis-backed — shared across all gateway replicas)
     → Channel<OrderPlacedEvent> (in-process buffer, 10k cap)
     → RabbitMqPublisherWorker (BackgroundService, auto-reconnect)
     → RabbitMQ exchange "orders.exchange" (topic), routing key "orders.placed"
@@ -123,6 +125,8 @@ HTTP client
 ```
 
 **Failed messages** (nack without requeue from Scala consumer) route to `dlx.orders.exchange` → `dlx.orders.placed`, where `DlqReprocessor` retries transient failures with its own bounded budget and escalates exhausted/permanent failures to `needs-attention.orders.placed` for manual triage — see `docs/resilience-design-doc.md` and `docs/runbook/` for the full failure-handling picture.
+
+**Two run modes** — host-based (`./run-all.sh`: one gateway instance, no nginx, no Redis fan-out, fast iteration) vs. containerized (`docker compose --profile containerized up -d --build --scale gateway=N`: nginx in front of N gateway replicas, Redis-backed rate limiting enforced globally across them). See the README's [Run](README.md#run) section for commands; `docker-compose.yml`'s `containerized` Compose profile keeps the two from overlapping.
 
 ### C# gateway internals
 
