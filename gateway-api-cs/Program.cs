@@ -1,10 +1,9 @@
 using System.Threading.Channels;
-using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Prometheus;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,17 +20,17 @@ builder.Services.AddHealthChecks().AddCheck<RabbitMqHealthCheck>("rabbitmq");
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddRateLimiter(options =>
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
-    options.AddFixedWindowLimiter("orders", o =>
-    {
-        o.Window = TimeSpan.FromMinutes(1);
-        o.PermitLimit = builder.Configuration.GetValue("Gateway:RateLimitPerMinute", 100);
-        o.QueueLimit = 0;
-        o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-    });
-    options.RejectionStatusCode = 429;
+    var options = ConfigurationOptions.Parse(builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379");
+    // Don't block forever if Redis is down at startup; the rate limiter fails open per-request
+    // on top of this (see RedisRateLimiter), so a slow/missing Redis shouldn't take the gateway
+    // down with it.
+    options.AbortOnConnectFail = false;
+    options.ConnectTimeout = builder.Configuration.GetValue("Redis:ConnectTimeoutMs", 1000);
+    return ConnectionMultiplexer.Connect(options);
 });
+builder.Services.AddSingleton<IDistributedRateLimiter, RedisRateLimiter>();
 
 var app = builder.Build();
 
@@ -50,7 +49,6 @@ app.UseForwardedHeaders(forwardedHeadersOptions);
 
 app.UseHttpMetrics();
 app.MapMetrics();
-app.UseRateLimiter();
 
 app.UseSwagger();
 app.UseSwaggerUI();
@@ -110,8 +108,8 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
     GatewayMetrics.OrdersReceived.Inc();
     return Results.Accepted($"/api/orders/{orderEvent.EventId}", new OrderResponse("Order queued successfully", orderEvent.EventId));
 })
+.AddEndpointFilter<RedisRateLimitFilter>()
 .AddEndpointFilter<ApiKeyFilter>()
-.RequireRateLimiting("orders")
 .WithOpenApi()
 .Produces<OrderResponse>(202)
 .Produces<ErrorResponse>(400)

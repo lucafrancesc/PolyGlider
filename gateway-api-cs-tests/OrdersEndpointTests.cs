@@ -21,6 +21,11 @@ public class FakeOrderPublisher : IOrderPublisher
     }
 }
 
+public class AlwaysAllowRateLimiter : IDistributedRateLimiter
+{
+    public Task<bool> TryAcquireAsync(string key, int permitLimit, TimeSpan window) => Task.FromResult(true);
+}
+
 public class OrdersEndpointTests
 {
     private WebApplicationFactory<Program> BuildFactory(FakeOrderPublisher fake, string? apiKey = null) =>
@@ -31,6 +36,9 @@ public class OrdersEndpointTests
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<IOrderPublisher>(fake);
+                // Real RedisRateLimiter would otherwise try to reach a real Redis instance --
+                // these tests aren't exercising the limiter itself, see RedisRateLimitTests.
+                services.AddSingleton<IDistributedRateLimiter>(new AlwaysAllowRateLimiter());
                 var workerDesc = services.FirstOrDefault(d => d.ImplementationType == typeof(RabbitMqPublisherWorker));
                 if (workerDesc is not null) services.Remove(workerDesc);
             });

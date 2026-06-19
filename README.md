@@ -6,7 +6,7 @@ A polyglot, event-driven order-processing system built to demonstrate how multip
 HTTP client
     │
     ▼ POST /api/orders
-C# Gateway ── ApiKeyFilter ── RateLimiter
+C# Gateway ── RedisRateLimitFilter (global, Redis-backed) ── ApiKeyFilter
     │
     ▼ Channel<T> (10k cap)
 RabbitMqPublisherWorker ── auto-reconnect (5s backoff)
@@ -185,6 +185,11 @@ The gateway generates `eventId` and `timestamp`; clients only send the three fie
 psql -h localhost -p 5432 -U postgres -d polyglider_inventory
 ```
 
+**Redis** (rate-limit counters only — no persistence, safe to flush)
+```bash
+redis-cli -h localhost -p 6379
+```
+
 Default credentials are in `.env.example`. Never commit a `.env` file with real secrets.
 
 ---
@@ -222,11 +227,15 @@ When enabled, every `POST /api/orders` request must include `X-Api-Key: <value>`
 
 ### Rate limiting
 
-A fixed-window rate limiter caps `POST /api/orders` at 100 requests per minute by default. Requests over the limit receive `429 Too Many Requests`. Override with:
+A Redis-backed fixed-window limiter (`RedisRateLimitFilter` + `RedisRateLimiter`, hand-rolled via a Lua `EVAL` doing an atomic `INCR`+`EXPIRE`, not a framework) caps `POST /api/orders` at 100 requests per minute per client IP by default. Requests over the limit receive `429 Too Many Requests`. Override with:
 
 ```bash
 GATEWAY__RATELIMITPERMINUTE=200 dotnet run --project gateway-api-cs
 ```
+
+The limit is enforced **globally** in Redis, not per gateway instance — a client round-robined across N replicas by nginx still only gets the configured limit, not N times it. Client IP is read from `HttpContext.Connection.RemoteIpAddress`, which `UseForwardedHeaders` populates from nginx's `X-Forwarded-For` — trusted unconditionally because the gateway has no host-exposed port, so nginx is the only thing that can ever call it directly. Point at a different Redis with `REDIS__CONNECTIONSTRING` (default `localhost:6379`).
+
+The limiter **fails open**: if Redis is unreachable or slow, `RedisRateLimiter` logs a warning and lets the request through rather than rejecting it — a rate-limiter outage isn't allowed to take down order placement.
 
 ### Backpressure
 
@@ -247,7 +256,8 @@ Key variables:
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `GATEWAY__API_KEY` | _(empty — auth disabled)_ | Enables `X-Api-Key` enforcement on `POST /api/orders` |
-| `GATEWAY__RATELIMITPERMINUTE` | `100` | Fixed-window rate limit on `POST /api/orders` |
+| `GATEWAY__RATELIMITPERMINUTE` | `100` | Global (Redis-backed) per-client-IP rate limit on `POST /api/orders` |
+| `REDIS__CONNECTIONSTRING` | `localhost:6379` | Redis instance backing the rate limiter |
 | `GATEWAY__CHANNELHIGHWATERMARK` | `8000` | Buffer occupancy at/above which `POST /api/orders` returns `429` instead of `202` |
 | `RABBITMQ__HOST` / `RABBIT_HOST` | `127.0.0.1` | Broker address (C# / Scala env var names differ) |
 | `RABBITMQ__SSL` / `RABBIT_SSL` | `false` | Enable AMQPS on port 5671 |
@@ -268,6 +278,7 @@ Key variables:
 | Duplicate delivery | `processed_events` table deduplicates by `eventId`; duplicate events are rolled back without touching the ledger |
 | Negative inventory | DB-level `CHECK (qty >= 0)` and `CHECK (order_count >= 0)` constraints on the `ledger` table reject any update that would underflow |
 | Broker / DB unreachable (health) | `GET /health` probes a live RabbitMQ connection and returns `503` when unreachable, enabling load balancers to pull broken instances |
+| Redis (rate limiter) unreachable | `RedisRateLimiter` fails open — logs a warning and lets the request through rather than rejecting it; a rate-limiter outage doesn't block order placement |
 
 ---
 
