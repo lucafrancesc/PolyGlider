@@ -7,6 +7,8 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import com.polyglider.consumer.RabbitConsumer
 
+import scala.concurrent.duration._
+
 class RabbitConsumerSpec extends CatsEffectSuite {
   type Delivery = RabbitConsumer.Delivery
 
@@ -93,5 +95,34 @@ class RabbitConsumerSpec extends CatsEffectSuite {
   test("eventIdOf returns \"unknown\" for malformed JSON") {
     val body = "{ not: valid json }".getBytes("UTF-8")
     assertEquals(RabbitConsumer.eventIdOf(body), "unknown")
+  }
+
+  test("retryWithBackoff succeeds immediately without retrying when the action succeeds") {
+    for {
+      attempts <- IO.ref(0)
+      result   <- RabbitConsumer.retryWithBackoff(
+        attempts.updateAndGet(_ + 1),
+        summon[Logger[IO]],
+        baseDelay = 1.millis, maxDelay = 5.millis, maxJitter = 1.millis
+      )
+    } yield assertEquals(result, 1)
+  }
+
+  test("retryWithBackoff retries on failure until the action eventually succeeds") {
+    for {
+      attempts <- IO.ref(0)
+      action    = attempts.updateAndGet(_ + 1).flatMap { n =>
+        if (n < 3) IO.raiseError(new RuntimeException(s"boom $n")) else IO.pure(n)
+      }
+      result   <- RabbitConsumer.retryWithBackoff(
+        action,
+        summon[Logger[IO]],
+        baseDelay = 1.millis, maxDelay = 5.millis, maxJitter = 1.millis
+      )
+      finalAttempts <- attempts.get
+    } yield {
+      assertEquals(result, 3)
+      assertEquals(finalAttempts, 3)
+    }
   }
 }

@@ -10,6 +10,11 @@ services:
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-guest}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS:-guest}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     mem_limit: 512m
     cpus: 1.0
 
@@ -91,8 +96,10 @@ services:
       - DB_USER=${POSTGRES_USER:-postgres}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     depends_on:
-      - message-broker
-      - postgres
+      message-broker:
+        condition: service_healthy
+      postgres:
+        condition: service_started
     mem_limit: 512m
     cpus: 1.0
 

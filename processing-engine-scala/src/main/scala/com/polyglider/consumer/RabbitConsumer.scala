@@ -65,6 +65,36 @@ object RabbitConsumer {
       .map(_.eventId)
       .getOrElse("unknown")
 
+  /** Retries `io` with capped exponential backoff + jitter until it succeeds, logging each
+    * failure. The initial RabbitMQ connection used to be a single attempt -- if it raced
+    * RabbitMQ's own startup (e.g. in the containerized stack, where `depends_on` only waits for
+    * the container to start, not for the broker to accept connections) it threw and the whole
+    * consumer Resource unwound, exiting the process with no way back. Retrying indefinitely
+    * here matches the gateway's own RabbitMQ reconnect behavior (RabbitMqPublisherWorker) and
+    * this app's general fail-open-and-keep-trying posture (see CircuitBreaker, retry-with-backoff
+    * for message processing) rather than giving up.
+    */
+  private[polyglider] def retryWithBackoff[A](
+    io: IO[A],
+    logger: Logger[IO],
+    baseDelay: FiniteDuration = 1.second,
+    maxDelay: FiniteDuration = 30.seconds,
+    multiplier: Double = 2.0,
+    maxJitter: FiniteDuration = 1.second
+  ): IO[A] = {
+    def loop(attempt: Int): IO[A] =
+      io.handleErrorWith { err =>
+        for {
+          jitterMs <- IO(scala.util.Random.nextLong(maxJitter.toMillis + 1))
+          delay     = (baseDelay.toMillis * math.pow(multiplier, attempt.toDouble)).toLong.min(maxDelay.toMillis).millis + jitterMs.millis
+          _        <- logger.warn(err)(s"Failed to connect to RabbitMQ (attempt ${attempt + 1}); retrying in $delay")
+          _        <- IO.sleep(delay)
+          result   <- loop(attempt + 1)
+        } yield result
+      }
+    loop(0)
+  }
+
   // Extracted for unit testing: enqueues d, or nacks + logs if the internal queue is full.
   private[polyglider] def handleOrDrop(
     d: Delivery,
@@ -92,7 +122,7 @@ object RabbitConsumer {
       // RabbitMQ Channel is not thread-safe; serialize all ack/nack/publish calls across worker fibers
       channelMutex <- Resource.eval(Mutex[IO])
       dispatcher <- Dispatcher.parallel[IO]
-      connRes <- Resource.make(IO.blocking {
+      connRes <- Resource.make(retryWithBackoff(IO.blocking {
         val host = sys.env.getOrElse("RABBIT_HOST", "127.0.0.1")
         val ssl  = sys.env.get("RABBIT_SSL").contains("true")
         val port = sys.env.getOrElse("RABBIT_PORT", if (ssl) "5671" else "5672").toInt
@@ -147,7 +177,7 @@ object RabbitConsumer {
 
         ch.basicConsume("orders.placed", false, consumer)
         (conn, ch, host, port)
-      })( { case (conn, ch, _, _) => IO.blocking(ch.close()) *> IO.blocking(conn.close()) })
+      }, logger))( { case (conn, ch, _, _) => IO.blocking(ch.close()) *> IO.blocking(conn.close()) })
 
       _ <- Resource.eval(connRes match { case (_, _, host, port) => logger.info(s"Connected to RabbitMQ at $host:$port, consuming from orders.placed") })
 
