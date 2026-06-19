@@ -72,6 +72,11 @@ This mode is a separate code path from `./run-all.sh`, which always starts exact
 
 # Unit tests only — no Docker needed
 ./test-all.sh --no-integration
+
+# Also run the full end-to-end pipeline test (builds + starts the containerized
+# stack, posts an order, and verifies it all the way through to a Postgres ledger
+# upsert and an MCP read-back — see tools/e2e-test.sh). Slow; not run by default.
+./test-all.sh --e2e
 ```
 
 ---
