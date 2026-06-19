@@ -5,10 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Infrastructure (required before running any service)
 
 ```bash
-docker-compose up -d   # starts RabbitMQ (:5672, management UI :15672) and Postgres (:5432)
+docker-compose up -d   # starts RabbitMQ (:5672, management UI :15672), Postgres (:5432), Redis
+                        # (:6379), Prometheus (:9090), Grafana (:3000), and Jaeger (:16686 UI,
+                        # :4317 OTLP) -- shared infra, not behind the `containerized` profile
 ```
 
-Default credentials for both: `guest`/`guest` (RabbitMQ), `postgres`/`postgres` (Postgres). Database name: `polyglider_inventory`.
+Default credentials: `guest`/`guest` (RabbitMQ), `postgres`/`postgres` (Postgres). Database name: `polyglider_inventory`.
 
 ---
 
@@ -133,8 +135,10 @@ HTTP client
 - `Program.cs` — minimal API entrypoint; registers DI and maps `POST /api/orders`
 - `Services/IOrderPublisher` — abstraction injected into the endpoint (enables mocking in tests); `PublishAsync` returns a `PublishOutcome` (`Accepted` / `NearCapacity` / `Full`), not a `bool` — `NearCapacity` and `Full` both map to HTTP `429` with `Retry-After: 1`
 - `Services/ChannelOrderPublisher` — writes to the `Channel<OrderPlacedEvent>` (non-blocking, drops on full); also signals `NearCapacity` once the buffer is at/above `Gateway:ChannelHighWaterMark` (default 8,000 of the 10,000 capacity)
-- `Services/RabbitMqPublisherWorker` — `BackgroundService` that drains the channel and publishes to RabbitMQ with camelCase JSON serialization, publisher confirms (`CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true)` — a nack or unconfirmed publish throws and triggers reconnect-with-backoff rather than logging a false success), and exponential reconnect backoff
+- `Services/RabbitMqPublisherWorker` — `BackgroundService` that drains the channel and publishes to RabbitMQ with camelCase JSON serialization, publisher confirms (`CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true)` — a nack or unconfirmed publish throws and triggers reconnect-with-backoff rather than logging a false success), and exponential reconnect backoff; also injects the W3C `traceparent` header (captured from `Activity.Current` at enqueue time) into the RabbitMQ message for distributed tracing
 - Input validation: `sku` must be non-empty (max 100 chars), `quantity` must be positive; both return HTTP 400
+- `Services/ApiKeyFilter` / `Services/RedisRateLimitFilter` — opt-in `X-Api-Key` check and a global, Redis-backed per-IP rate limit (`Gateway:RateLimitPerMinute`, default 100/min), both `IEndpointFilter`s on `POST /api/orders`
+- Also exposes Swagger UI (`/swagger`), Prometheus metrics (`/metrics`), and OpenTelemetry tracing (`GatewayTracing`, OTLP export via `Otel:ExporterEndpoint`)
 
 ### Scala engine internals
 
@@ -142,8 +146,9 @@ HTTP client
 - `RabbitConsumer` — uses raw `com.rabbitmq.client` (not fs2-rabbit, which is a declared but unused dependency); bounded `Queue[IO, Delivery]` (1000) with `workerCount` (default 4) parallel fibers; logs a per-SKU analytics snapshot every `app.consumer.summary-every` messages (default 10)
 - `Database` — Doobie + HikariCP; transactor and Flyway migrations only
 - `storage/DoobieSkuStorage` — implements `SkuStorage` trait; `upsertSku` does `INSERT … ON CONFLICT … UPDATE` in one transaction (idempotent), incrementing both `qty` and `order_count`; `snapshot` returns all rows ordered by SKU for logging
-- Flyway migrations: `V1` — `ledger(sku TEXT PRIMARY KEY, qty BIGINT)`; `V2` — `processed_events(event_id TEXT PRIMARY KEY)` for dedup; `V3` — adds `order_count BIGINT NOT NULL DEFAULT 0` to `ledger`
+- Flyway migrations: `V1` — `ledger(sku TEXT PRIMARY KEY, qty BIGINT)`; `V2` — `processed_events(event_id TEXT PRIMARY KEY)` for dedup; `V3` — adds `order_count BIGINT NOT NULL DEFAULT 0` to `ledger`; `V4` — adds `CHECK (qty >= 0)` and `CHECK (order_count >= 0)` constraints
 - Tests use H2 in-memory with a manual insert-if-not-exists pattern (H2 doesn't support the Postgres `ON CONFLICT` syntax)
+- Exposes Prometheus metrics on `:9100/metrics` (`app.metrics.port` / `METRICS_PORT`) and OpenTelemetry tracing via the autoconfigure SDK (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`); `RabbitConsumer.withSpan` extracts the gateway's `traceparent` header and parents a `process orders.placed` consumer span onto it
 
 ### Event schema on the broker (camelCase JSON)
 
