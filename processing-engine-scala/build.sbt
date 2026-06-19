@@ -41,6 +41,13 @@ lazy val root = (project in file("."))
       "io.prometheus" % "simpleclient" % "0.16.0",
       "io.prometheus" % "simpleclient_httpserver" % "0.16.0",
 
+      // OpenTelemetry tracing — autoconfigure reads OTEL_EXPORTER_OTLP_ENDPOINT /
+      // OTEL_SERVICE_NAME env vars and wires up the OTLP exporter via ServiceLoader
+      "io.opentelemetry" % "opentelemetry-api" % "1.43.0",
+      "io.opentelemetry" % "opentelemetry-sdk" % "1.43.0",
+      "io.opentelemetry" % "opentelemetry-sdk-extension-autoconfigure" % "1.43.0",
+      "io.opentelemetry" % "opentelemetry-exporter-otlp" % "1.43.0",
+
       // Testing
       "org.scalameta" %% "munit" % "1.3.3" % Test,
       "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test,

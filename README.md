@@ -211,6 +211,18 @@ All three services expose Prometheus metrics:
 
 All three services run on the host (`run-all.sh`), not inside `docker-compose.yml`, so Prometheus reaches them through the docker-to-host gateway rather than compose service names. The gateway binds to `0.0.0.0:5187` (not `localhost`) in `Properties/launchSettings.json` specifically so that gateway is reachable — binding to loopback only would make it unreachable from inside the Prometheus container.
 
+### Distributed tracing
+
+**Jaeger** — http://localhost:16686. Both `docker compose up -d` (shared infra, not behind the `containerized` profile) and `run-all.sh` bring it up, since host-based and containerized services both need it.
+
+The C# gateway and Scala engine each export traces via OTLP/gRPC to Jaeger, defaulting to `http://localhost:4317` (overridable via `OTEL__EXPORTERENDPOINT` for the gateway, `OTEL_EXPORTER_OTLP_ENDPOINT` for the engine — see `.env.example`). A trace covers the full order pipeline:
+
+- The gateway's `POST /api/orders` request span (`OpenTelemetry.Instrumentation.AspNetCore`, automatic)
+- A `publish orders.placed` producer span around the RabbitMQ publish in `RabbitMqPublisherWorker` — parented onto the request span captured at enqueue time, since by the time the background worker dequeues and publishes, the original request has already completed and `Activity.Current` no longer points at it
+- A `process orders.placed` consumer span in the Scala engine's `RabbitConsumer`, parented onto the W3C `traceparent` header the gateway injected into the RabbitMQ message, wrapping the dedup/upsert/ack
+
+A message with no trace headers (e.g. a DLQ retry that's been through several backoff hops) still produces a span — just unparented — rather than failing.
+
 ---
 
 ## Security
