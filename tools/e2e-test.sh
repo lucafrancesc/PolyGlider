@@ -26,34 +26,10 @@ if $TEAR_DOWN; then
 fi
 
 log "Building and starting the containerized stack..."
+# `up -d` itself blocks until message-broker's healthcheck passes before starting the engine
+# (depends_on: condition: service_healthy), and RabbitConsumer.start retries its own connection
+# with backoff on top of that -- no need to separately wait for RabbitMQ or restart the engine.
 docker compose -f "$REPO_ROOT/docker-compose.yml" --profile containerized up -d --build
-
-log "Waiting for RabbitMQ to be ready..."
-for i in $(seq 1 30); do
-  if docker exec polyglider_broker rabbitmq-diagnostics -q ping &>/dev/null; then
-    ok "RabbitMQ is ready."
-    break
-  fi
-  [ "$i" -eq 30 ] && die "RabbitMQ did not become ready in time."
-  sleep 1
-done
-
-# `depends_on` (no healthcheck condition) only waits for the container to *start*, not for
-# RabbitMQ to actually accept connections, and the engine doesn't retry on startup failure —
-# it can race RabbitMQ and exit before it's reachable. Retry-restart it until its log shows a
-# successful connection.
-log "Ensuring the engine is connected to RabbitMQ (retrying past any startup race)..."
-ENGINE_CONNECTED=false
-for i in $(seq 1 10); do
-  if docker logs polyglider-engine-1 2>&1 | grep -q "Connected to RabbitMQ"; then
-    ENGINE_CONNECTED=true
-    break
-  fi
-  docker compose -f "$REPO_ROOT/docker-compose.yml" --profile containerized start engine >/dev/null
-  sleep 3
-done
-$ENGINE_CONNECTED || die "Engine never connected to RabbitMQ after $i restart attempts."
-ok "Engine is connected to RabbitMQ."
 
 log "Waiting for the gateway to report healthy (via nginx :80)..."
 for i in $(seq 1 60); do
