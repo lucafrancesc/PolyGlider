@@ -17,6 +17,9 @@ builder.Services.AddSingleton<RabbitMqConnectionStatus>();
 builder.Services.AddSingleton<IRabbitMqConnectionStatus>(sp => sp.GetRequiredService<RabbitMqConnectionStatus>());
 builder.Services.AddHealthChecks().AddCheck<RabbitMqHealthCheck>("rabbitmq");
 
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
 builder.Services.AddRateLimiter(options =>
 {
     options.AddFixedWindowLimiter("orders", o =>
@@ -35,6 +38,9 @@ app.UseHttpMetrics();
 app.MapMetrics();
 app.UseRateLimiter();
 
+app.UseSwagger();
+app.UseSwaggerUI();
+
 app.MapHealthChecks("/health", new HealthCheckOptions
 {
     ResponseWriter = async (ctx, report) =>
@@ -48,7 +54,8 @@ app.MapHealthChecks("/health", new HealthCheckOptions
             bufferUsed = entry.Data?.GetValueOrDefault("bufferUsed")
         });
     }
-});
+})
+.WithOpenApi();
 
 app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publisher, ILogger<Program> logger, HttpContext context) =>
 {
@@ -86,17 +93,20 @@ app.MapPost("/api/orders", async (OrderRequest request, IOrderPublisher publishe
     }
 
     GatewayMetrics.OrdersReceived.Inc();
-    return Results.Accepted($"/api/orders/{orderEvent.EventId}", new
-    {
-        message = "Order queued successfully",
-        eventId = orderEvent.EventId
-    });
+    return Results.Accepted($"/api/orders/{orderEvent.EventId}", new OrderResponse("Order queued successfully", orderEvent.EventId));
 })
 .AddEndpointFilter<ApiKeyFilter>()
-.RequireRateLimiting("orders");
+.RequireRateLimiting("orders")
+.WithOpenApi()
+.Produces<OrderResponse>(202)
+.Produces<ErrorResponse>(400)
+.ProducesProblem(429)
+.Produces(503);
 
 app.Run();
 
 public record OrderRequest(string Sku, int Quantity, Guid CustomerId);
 public record OrderPlacedEvent(Guid EventId, string Sku, int Quantity, Guid CustomerId, DateTime Timestamp);
+public record OrderResponse(string Message, Guid EventId);
+public record ErrorResponse(string Error);
 public partial class Program { }

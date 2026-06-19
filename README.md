@@ -110,6 +110,16 @@ Or fire a batch and get a pass/fail summary:
 
 ---
 
+## API docs
+
+Swagger UI is at http://localhost:5187/swagger — generated live from the route definitions in `Program.cs` (`Swashbuckle.AspNetCore`), for interactive human browsing. It is enabled unconditionally, not gated to `Development`, since the whole point of this stack is to be inspectable by anyone who clones the repo.
+
+This is **not** the same artifact as `contracts/order-api.json`: that hand-maintained JSON Schema (strict `additionalProperties: false`) is the contract-test source of truth, validated in `OrderApiSchemaTests.cs`. Swagger can drift if a route changes without updating its `.Produces<T>()` annotations; the JSON Schema cannot drift silently because the contract test fails. Neither is generated from the other.
+
+When the nginx load balancer lands (tracked separately), it will need a `location /swagger` passthrough to the gateway so Swagger UI stays reachable through it rather than only on the gateway's direct port.
+
+---
+
 ## Health check
 
 ```bash
