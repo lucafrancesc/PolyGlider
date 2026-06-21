@@ -37,10 +37,10 @@ for i in $(seq 1 "$COUNT"); do
   if [ "$response" -eq 202 ]; then
     event_id=$(echo "$body" | grep -o '"eventId":"[^"]*"' | cut -d'"' -f4 || echo "?")
     echo -e "  ${GREEN}✓${RESET} [$i/$COUNT] $sku qty=$qty → 202  eventId=${event_id}"
-    ((passed++))
+    passed=$((passed + 1))
   else
     echo -e "  ${RED}✗${RESET} [$i/$COUNT] $sku qty=$qty → $response  body=$body"
-    ((failed++))
+    failed=$((failed + 1))
   fi
 done
 
