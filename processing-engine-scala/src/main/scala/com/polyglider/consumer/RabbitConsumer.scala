@@ -32,6 +32,19 @@ object RabbitConsumer {
     else if (!UuidUtils.isValidUuid(order.customerId)) Left(InvalidUuidException("customerId", order.customerId))
     else Right(order)
 
+  /** See ADR-006: an unrecognized version means this consumer doesn't know how to interpret the
+    * payload's shape, which retrying can't fix — same default-Permanent reasoning as a malformed
+    * UUID above.
+    */
+  private[polyglider] final case class UnsupportedSchemaVersionException(version: String)
+    extends RuntimeException(s"Unsupported event schema version: '$version'")
+
+  private[polyglider] val SupportedVersions: Set[String] = Set("1")
+
+  private[polyglider] def validateVersion(order: OrderPlaced): Either[UnsupportedSchemaVersionException, OrderPlaced] =
+    if (SupportedVersions.contains(order.version)) Right(order)
+    else Left(UnsupportedSchemaVersionException(order.version))
+
   // private[polyglider] so tests in com.polyglider can reference the type
   private[polyglider] case class Delivery(
     channel: Channel,
@@ -246,7 +259,7 @@ object RabbitConsumer {
             val task = withSpan(d.properties) {
               for {
                 parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
-                order  <- IO.fromEither(validateUuids(parsed))
+                order  <- IO.fromEither(validateUuids(parsed).flatMap(validateVersion))
                 _ <- logger.info(s"Message received: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
                 result <- storage.upsertSku(order.eventId, order.sku, order.quantity)
                 _ <- result match {

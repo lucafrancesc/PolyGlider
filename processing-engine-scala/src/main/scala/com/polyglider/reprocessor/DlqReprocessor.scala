@@ -184,7 +184,7 @@ object DlqReprocessor {
 
           val task = for {
             parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
-            order  <- IO.fromEither(RabbitConsumer.validateUuids(parsed))
+            order  <- IO.fromEither(RabbitConsumer.validateUuids(parsed).flatMap(RabbitConsumer.validateVersion))
             result <- storage.upsertSku(order.eventId, order.sku, order.quantity)
             _     <- result match {
               case UpsertResult.Applied =>

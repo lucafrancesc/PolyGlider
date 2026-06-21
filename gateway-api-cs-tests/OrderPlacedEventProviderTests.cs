@@ -40,7 +40,7 @@ public class OrderPlacedEventProviderTests
 
     [Fact]
     [Trait("Category", "Contract")]
-    public void OrderPlacedEvent_SerializesAllFiveFieldsInCamelCase()
+    public void OrderPlacedEvent_SerializesAllSixFieldsInCamelCase()
     {
         var evt = new OrderPlacedEvent(
             EventId: Guid.Parse("11111111-1111-4111-8111-111111111111"),
@@ -57,6 +57,7 @@ public class OrderPlacedEventProviderTests
         Assert.True(doc.TryGetProperty("quantity", out var quantity), "Missing field: quantity");
         Assert.True(doc.TryGetProperty("customerId", out var customerId), "Missing field: customerId");
         Assert.True(doc.TryGetProperty("timestamp", out var timestamp), "Missing field: timestamp");
+        Assert.True(doc.TryGetProperty("version", out var version), "Missing field: version");
 
         Assert.Equal(JsonValueKind.String, eventId.ValueKind);
         Assert.Matches(UuidPattern, eventId.GetString()!);
@@ -73,6 +74,9 @@ public class OrderPlacedEventProviderTests
         Assert.Equal(JsonValueKind.String, timestamp.ValueKind);
         Assert.True(DateTimeOffset.TryParse(timestamp.GetString(), out _),
             $"timestamp '{timestamp.GetString()}' is not a valid ISO-8601 date");
+
+        Assert.Equal(JsonValueKind.String, version.ValueKind);
+        Assert.Equal("1", version.GetString());
     }
 
     [Fact]
@@ -88,7 +92,7 @@ public class OrderPlacedEventProviderTests
 
         var messageBody = messages[0].GetProperty("contents");
 
-        string[] expectedKeys = ["eventId", "sku", "quantity", "customerId", "timestamp"];
+        string[] expectedKeys = ["eventId", "sku", "quantity", "customerId", "timestamp", "version"];
         foreach (var key in expectedKeys)
             Assert.True(messageBody.TryGetProperty(key, out _),
                 $"Pact message body is missing field: {key}");
@@ -96,6 +100,7 @@ public class OrderPlacedEventProviderTests
         Assert.Matches(UuidPattern, messageBody.GetProperty("eventId").GetString()!);
         Assert.Matches(UuidPattern, messageBody.GetProperty("customerId").GetString()!);
         Assert.Equal(JsonValueKind.Number, messageBody.GetProperty("quantity").ValueKind);
+        Assert.Equal(JsonValueKind.String, messageBody.GetProperty("version").ValueKind);
     }
 
     private sealed class SkipException(string reason) : Exception(reason);

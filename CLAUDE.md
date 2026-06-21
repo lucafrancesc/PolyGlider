@@ -76,8 +76,8 @@ cd gateway-api-cs-tests && dotnet test --filter "Category=Contract"
 ```
 
 **Message contract (Pact):**
-- Consumer: `OrderPlacedEventContractSpec.scala` — uses pact-jvm 4.6.14 to define the 5-field event shape (UUID matchers on `eventId`/`customerId`, type matchers on `sku`/`timestamp`, integer matcher on `quantity`), writes the pact file, then asserts `OrderPlaced` can deserialize the example body
-- Provider: `OrderPlacedEventProviderTests.cs` — serializes `OrderPlacedEvent` with `JsonNamingPolicy.CamelCase` and verifies all 5 fields are present with correct types; a second assertion cross-checks the serialization against the pact file's `contents`
+- Consumer: `OrderPlacedEventContractSpec.scala` — uses pact-jvm 4.6.14 to define the 6-field event shape (UUID matchers on `eventId`/`customerId`, type matchers on `sku`/`timestamp`/`version`, integer matcher on `quantity`), writes the pact file, then asserts `OrderPlaced` can deserialize the example body (plus a second test asserting a pre-`version`-field 5-field payload still deserializes, defaulting `version` to `"1"` — see ADR-006)
+- Provider: `OrderPlacedEventProviderTests.cs` — serializes `OrderPlacedEvent` with `JsonNamingPolicy.CamelCase` and verifies all 6 fields are present with correct types; a second assertion cross-checks the serialization against the pact file's `contents`
 
 **HTTP contract (JSON Schema):**
 - `OrderApiSchemaTests.cs` — validates valid request/response bodies pass the schema and invalid ones (empty sku, zero/negative quantity, missing required fields) are rejected; uses `JsonSchema.Net 7.4.0`
@@ -163,10 +163,10 @@ HTTP client
 ### Event schema on the broker (camelCase JSON)
 
 ```json
-{ "eventId": "uuid", "sku": "string", "quantity": 1, "customerId": "uuid", "timestamp": "ISO-8601 UTC" }
+{ "eventId": "uuid", "sku": "string", "quantity": 1, "customerId": "uuid", "timestamp": "ISO-8601 UTC", "version": "1" }
 ```
 
-The gateway generates `eventId` and `timestamp`; clients only send `sku`, `quantity`, `customerId`.
+The gateway generates `eventId`, `timestamp`, and `version`; clients only send `sku`, `quantity`, `customerId`. `version` defaults to `"1"` if absent (pre-ADR-006 payloads); the Scala consumer nacks straight to the DLX (no retries) on any version it doesn't recognize — see [ADR-006](docs/adr/ADR-006-schema-versioning-order-events.md).
 
 ---
 
@@ -174,7 +174,7 @@ The gateway generates `eventId` and `timestamp`; clients only send `sku`, `quant
 
 Reference these before re-deriving a design rationale from scratch — most resilience decisions are already documented:
 
-- `docs/adr/` — one-page Architecture Decision Records (Status/Context/Options considered/Decision/Consequences) for the major design choices: RabbitMQ vs Kafka, `processed_events` dedup, the in-process `Channel` buffer, transient/permanent failure classification, circuit breaker thresholds
+- `docs/adr/` — one-page Architecture Decision Records (Status/Context/Options considered/Decision/Consequences) for the major design choices: RabbitMQ vs Kafka, `processed_events` dedup, the in-process `Channel` buffer, transient/permanent failure classification, circuit breaker thresholds, schema versioning for the order event envelope
 - `docs/resilience-design-doc.md` — short design doc covering backoff strategy, circuit breaker thresholds, classification rules, and the DLQ reprocessor's retry-before-escalation count, with the options considered for each
 - `docs/postmortems/` — chaos-testing postmortems (`tools/chaos/`) with measured, live-tested behavior — several of these informed the ADRs and design doc above, e.g. the circuit breaker's real-world tripping latency turning out to be ~150s rather than near-instant under the original `basicQos(1)` prefetch setting
 - `docs/runbook/` — Symptoms/Diagnosis/Remediation/Verification entries for DLQ depth climbing, circuit breaker open, RabbitMQ broker unreachable, malformed payload in DLQ, and duplicate message storm; links the Grafana "PolyGlider Resilience" dashboard panels and Prometheus alert names in `observability/`
