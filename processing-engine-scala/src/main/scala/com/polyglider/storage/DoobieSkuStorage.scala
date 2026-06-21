@@ -6,7 +6,7 @@ import doobie.*
 import doobie.implicits.*
 
 class DoobieSkuStorage(xa: Transactor[IO]) extends SkuStorage {
-  def upsertSku(eventId: String, sku: String, delta: Int): IO[Unit] = {
+  def upsertSku(eventId: String, sku: String, delta: Int): IO[UpsertResult] = {
     val insertEvent = sql"INSERT INTO processed_events (event_id) VALUES ($eventId) ON CONFLICT (event_id) DO NOTHING".update.run
     val upsertLedger = sql"""
       INSERT INTO ledger (sku, qty, order_count) VALUES ($sku, $delta, 1)
@@ -22,9 +22,9 @@ class DoobieSkuStorage(xa: Transactor[IO]) extends SkuStorage {
     // skipping the ledger upsert when the event is already recorded makes redelivery an
     // idempotent no-op instead.
     insertEvent.flatMap {
-      case 0 => ().pure[ConnectionIO]
-      case _ => upsertLedger.void
-    }.transact(xa).void
+      case 0 => (UpsertResult.DuplicateSkipped: UpsertResult).pure[ConnectionIO]
+      case _ => upsertLedger.as(UpsertResult.Applied: UpsertResult)
+    }.transact(xa)
   }
 
   def snapshot: IO[List[SkuStats]] =

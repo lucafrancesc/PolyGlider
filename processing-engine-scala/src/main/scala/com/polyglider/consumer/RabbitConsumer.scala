@@ -7,7 +7,7 @@ import org.typelevel.log4cats.Logger
 import io.circe.generic.auto._
 import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
 import com.polyglider.model.OrderPlaced
-import com.polyglider.storage.SkuStorage
+import com.polyglider.storage.{SkuStorage, UpsertResult}
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
 import com.polyglider.UuidUtils
 import com.polyglider.metrics.Metrics
@@ -248,8 +248,13 @@ object RabbitConsumer {
                 parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
                 order  <- IO.fromEither(validateUuids(parsed))
                 _ <- logger.info(s"Message received: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
-                _ <- storage.upsertSku(order.eventId, order.sku, order.quantity)
-                _ <- logger.info(s"Stored to ledger: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
+                result <- storage.upsertSku(order.eventId, order.sku, order.quantity)
+                _ <- result match {
+                  case UpsertResult.Applied =>
+                    logger.info(s"Stored to ledger: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
+                  case UpsertResult.DuplicateSkipped =>
+                    logger.info(s"Duplicate eventId=${order.eventId} — skipped (already applied)")
+                }
                 _ <- ack
                 _ <- IO.delay(Metrics.messagesProcessed.inc())
                 n <- counter.updateAndGet(_ + 1)

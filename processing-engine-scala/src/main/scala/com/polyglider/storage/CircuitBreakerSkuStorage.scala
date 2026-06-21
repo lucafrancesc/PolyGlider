@@ -9,7 +9,7 @@ import com.polyglider.resilience.CircuitBreaker
   * message-processing hot path, so it is left unguarded.
   */
 final class CircuitBreakerSkuStorage(underlying: SkuStorage, breaker: CircuitBreaker) extends SkuStorage {
-  def upsertSku(eventId: String, sku: String, delta: Int): IO[Unit] =
+  def upsertSku(eventId: String, sku: String, delta: Int): IO[UpsertResult] =
     breaker.protect(underlying.upsertSku(eventId, sku, delta))
 
   def snapshot: IO[List[SkuStats]] = underlying.snapshot

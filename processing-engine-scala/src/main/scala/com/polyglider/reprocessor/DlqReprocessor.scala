@@ -7,7 +7,7 @@ import org.typelevel.log4cats.Logger
 import io.circe.generic.auto._
 import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
 import com.polyglider.model.OrderPlaced
-import com.polyglider.storage.SkuStorage
+import com.polyglider.storage.{SkuStorage, UpsertResult}
 import com.polyglider.consumer.{RabbitConsumer, RetryPolicy}
 import com.polyglider.consumer.ProcessingFailure
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
@@ -185,8 +185,13 @@ object DlqReprocessor {
           val task = for {
             parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
             order  <- IO.fromEither(RabbitConsumer.validateUuids(parsed))
-            _     <- storage.upsertSku(order.eventId, order.sku, order.quantity)
-            _     <- logger.info(s"[${Instant.now}] DLQ reprocess succeeded for eventId=${order.eventId} sku=${order.sku} after ${reprocessCountOf(d.properties)} prior attempt(s)")
+            result <- storage.upsertSku(order.eventId, order.sku, order.quantity)
+            _     <- result match {
+              case UpsertResult.Applied =>
+                logger.info(s"[${Instant.now}] DLQ reprocess succeeded for eventId=${order.eventId} sku=${order.sku} after ${reprocessCountOf(d.properties)} prior attempt(s)")
+              case UpsertResult.DuplicateSkipped =>
+                logger.info(s"[${Instant.now}] DLQ reprocess for eventId=${order.eventId} sku=${order.sku} was a duplicate -- skipped (already applied)")
+            }
             _     <- ack
           } yield ()
 
