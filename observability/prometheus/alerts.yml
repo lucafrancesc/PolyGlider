@@ -27,3 +27,17 @@ groups:
         annotations:
           summary: "postgres-write circuit breaker open for over 60s"
           description: "The Postgres write path has been failing fast for over a minute. Check Postgres availability; see the circuit-breaker runbook entry once it's open recovers cleanly."
+
+  # SLO error-budget alerts -- see docs/slo.md. DlqDepthHigh and CircuitBreakerOpenTooLong
+  # above already give fast, real-time detection for two of the three SLOs there; this group
+  # adds the one SLO (processing latency) with no existing real-time alert at all.
+  - name: polyglider-slo-error-budget
+    rules:
+      - alert: ProcessingLatencySLOBudgetBurn
+        expr: slo:processing_latency:compliance_ratio_1h < 0.99
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Processing-latency SLO error budget burning (rolling 1h compliance below 99%)"
+          description: "Fewer than 99% of orders over the trailing hour were acked by the Scala consumer within 5s of the gateway's recorded order timestamp (see polyglider_order_processing_duration_seconds and docs/slo.md). Check for a Postgres outage, circuit breaker activity, or consumer backlog."

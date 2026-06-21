@@ -15,6 +15,7 @@ import com.polyglider.tracing.Tracing
 import io.opentelemetry.api.trace.{SpanKind, StatusCode, Tracer}
 
 import java.nio.charset.StandardCharsets
+import java.time.Instant
 import scala.concurrent.duration.{DurationLong, FiniteDuration}
 
 object RabbitConsumer {
@@ -68,6 +69,20 @@ object RabbitConsumer {
     headers.put(RetryCountHeader, Integer.valueOf(count))
     properties.builder().headers(headers).build()
   }
+
+  /** Backs the `polyglider_order_processing_duration_seconds` SLO histogram (see ADR-007). A
+    * malformed/unparseable timestamp is an observability gap, not a processing failure -- it
+    * must never fail the message itself, so a parse error is logged and skipped rather than
+    * propagated.
+    */
+  private[polyglider] def recordProcessingLatency(timestamp: String, now: Instant, logger: Logger[IO]): IO[Unit] =
+    IO(Instant.parse(timestamp)).attempt.flatMap {
+      case Right(emittedAt) =>
+        val seconds = java.time.Duration.between(emittedAt, now).toMillis / 1000.0
+        IO.delay(Metrics.orderProcessingDuration.observe(seconds))
+      case Left(err) =>
+        logger.warn(err)(s"Could not parse order timestamp '$timestamp' for the processing-latency metric; skipping observation")
+    }
 
   /** Best-effort extraction of `eventId` for log correlation, even on the failure path where the
     * body may not have been (re-)parsed yet. `eventId` is generated once by the gateway and
@@ -269,6 +284,8 @@ object RabbitConsumer {
                     logger.info(s"Duplicate eventId=${order.eventId} — skipped (already applied)")
                 }
                 _ <- ack
+                now <- IO.realTimeInstant
+                _ <- recordProcessingLatency(order.timestamp, now, logger)
                 _ <- IO.delay(Metrics.messagesProcessed.inc())
                 n <- counter.updateAndGet(_ + 1)
                 _ <- if (n % summaryEvery == 0) logSnapshot(storage, logger) else IO.unit

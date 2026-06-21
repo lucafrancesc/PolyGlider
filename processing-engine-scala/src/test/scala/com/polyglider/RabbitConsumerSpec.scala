@@ -114,6 +114,36 @@ class RabbitConsumerSpec extends CatsEffectSuite {
     assertEquals(ProcessingFailure.classify(err), PermanentFailure(err))
   }
 
+  test("recordProcessingLatency observes the elapsed time between the order's timestamp and now") {
+    import com.polyglider.metrics.Metrics
+
+    val before = Metrics.orderProcessingDuration.labels().get()
+    val emittedAt = java.time.Instant.parse("2024-01-01T00:00:00Z")
+    val now       = emittedAt.plusSeconds(2)
+
+    for {
+      _ <- RabbitConsumer.recordProcessingLatency(emittedAt.toString, now, summon[Logger[IO]])
+    } yield {
+      val after = Metrics.orderProcessingDuration.labels().get()
+      assertEquals(after.buckets.last, before.buckets.last + 1.0)
+      assertEqualsDouble(after.sum - before.sum, 2.0, 0.001)
+    }
+  }
+
+  test("recordProcessingLatency skips the observation (without failing) for an unparseable timestamp") {
+    import com.polyglider.metrics.Metrics
+
+    val before = Metrics.orderProcessingDuration.labels().get()
+
+    for {
+      _ <- RabbitConsumer.recordProcessingLatency("not-a-timestamp", java.time.Instant.now(), summon[Logger[IO]])
+    } yield {
+      val after = Metrics.orderProcessingDuration.labels().get()
+      assertEqualsDouble(after.sum, before.sum, 0.0)
+      assertEquals(after.buckets.last, before.buckets.last)
+    }
+  }
+
   test("eventIdOf extracts eventId from a valid OrderPlaced body") {
     val body =
       """{"eventId":"11111111-1111-1111-1111-111111111111","sku":"SKU-1","quantity":2,"customerId":"22222222-2222-2222-2222-222222222222","timestamp":"2024-01-01T00:00:00Z"}"""

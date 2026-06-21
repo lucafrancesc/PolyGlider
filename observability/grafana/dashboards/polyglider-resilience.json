@@ -115,6 +115,172 @@
         { "expr": "sum by (tool, outcome) (rate(mcp_tool_calls_total[1m]))", "legendFormat": "{{tool}} ({{outcome}})/s" },
         { "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(mcp_tool_call_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{tool}}" }
       ]
+    },
+    {
+      "id": 9,
+      "title": "SLO: rolling 1h compliance (target: see docs/slo.md)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }
+    },
+    {
+      "id": 10,
+      "title": "Processing latency compliance (target 99%)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 33 },
+      "targets": [
+        { "expr": "slo:processing_latency:compliance_ratio_1h", "legendFormat": "compliance" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 0.99, "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "DLQ depth compliance (target 99.9%)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 33 },
+      "targets": [
+        { "expr": "slo:dlq_depth:compliance_ratio_1h", "legendFormat": "compliance" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 0.999, "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Circuit breaker open time, last 1h (target ≤ 60s)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 33 },
+      "targets": [
+        { "expr": "slo:circuit_breaker_open:seconds_1h", "legendFormat": "seconds open" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 60, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Error budget remaining: processing latency",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 39 },
+      "targets": [
+        { "expr": "slo:processing_latency:error_budget_remaining_ratio_1h", "legendFormat": "budget remaining" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": -1,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 0, "color": "yellow" },
+              { "value": 0.5, "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Error budget remaining: DLQ depth",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 39 },
+      "targets": [
+        { "expr": "slo:dlq_depth:error_budget_remaining_ratio_1h", "legendFormat": "budget remaining" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": -1,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 0, "color": "yellow" },
+              { "value": 0.5, "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "Error budget remaining: circuit breaker open time",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 39 },
+      "targets": [
+        { "expr": "slo:circuit_breaker_open:error_budget_remaining_ratio_1h", "legendFormat": "budget remaining" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": -1,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 0, "color": "yellow" },
+              { "value": 0.5, "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "Error budget remaining over time (burn rate)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 45 },
+      "targets": [
+        { "expr": "slo:processing_latency:error_budget_remaining_ratio_1h", "legendFormat": "processing latency" },
+        { "expr": "slo:dlq_depth:error_budget_remaining_ratio_1h", "legendFormat": "dlq depth" },
+        { "expr": "slo:circuit_breaker_open:error_budget_remaining_ratio_1h", "legendFormat": "circuit breaker open time" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": -1,
+          "max": 1
+        }
+      }
     }
   ]
 }
