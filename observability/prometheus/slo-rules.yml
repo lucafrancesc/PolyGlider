@@ -1,0 +1,41 @@
+groups:
+  - name: polyglider-slo-recording-rules
+    rules:
+      # SLO 1: processing latency. Fraction of orders, over the trailing 1h, acked by the
+      # Scala consumer within 5s of the gateway's recorded order timestamp.
+      - record: slo:processing_latency:compliance_ratio_1h
+        expr: >
+          sum(rate(polyglider_order_processing_duration_seconds_bucket{le="5.0"}[1h]))
+          /
+          sum(rate(polyglider_order_processing_duration_seconds_count[1h]))
+
+      - record: slo:processing_latency:error_budget_remaining_ratio_1h
+        # Target 99% -> 1% (0.01) error budget. 1.0 = full budget remaining, 0 = exhausted,
+        # negative = over budget. clamp_min keeps the panel from showing a misleadingly large
+        # negative number during a genuinely bad window.
+        expr: clamp_min(1 - ((1 - slo:processing_latency:compliance_ratio_1h) / 0.01), -1)
+
+      # SLO 2: dlx.orders.placed depth. Fraction of the trailing 1h where depth stayed at or
+      # below the existing DlqDepthHigh alert's threshold (50) -- the SLO formalizes the same
+      # threshold the alert already uses, as a rolling-window compliance ratio rather than an
+      # instantaneous breach. `max by (queue)` collapses the `instance` label (only one engine
+      # process should ever be reporting this queue's depth at a time, but a deploy overlap or
+      # stale scrape target -- as seen switching between host/containerized run modes locally --
+      # could otherwise produce duplicate series for the same logical queue).
+      - record: slo:dlq_depth:compliance_ratio_1h
+        expr: 1 - avg_over_time((max by (queue) (polyglider_dlq_depth{queue="dlx.orders.placed"}) > bool 50)[1h:])
+
+      - record: slo:dlq_depth:error_budget_remaining_ratio_1h
+        # Target 99.9% -> 0.1% (0.001) error budget.
+        expr: clamp_min(1 - ((1 - slo:dlq_depth:compliance_ratio_1h) / 0.001), -1)
+
+      # SLO 3: postgres-write circuit breaker open time. Estimated cumulative seconds spent in
+      # the `open` state (value 2) over the trailing 1h, derived from the fraction of scraped
+      # samples observed in that state -- approximate (assumes roughly uniform scrape spacing),
+      # not an exact integral, which is an accepted tradeoff for a gauge-based state metric.
+      - record: slo:circuit_breaker_open:seconds_1h
+        expr: avg_over_time((max by (name) (polyglider_circuit_breaker_state{name="postgres-write"}) == bool 2)[1h:]) * 3600
+
+      - record: slo:circuit_breaker_open:error_budget_remaining_ratio_1h
+        # Target: at most 60s open per rolling hour.
+        expr: clamp_min(1 - (slo:circuit_breaker_open:seconds_1h / 60), -1)
