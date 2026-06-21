@@ -74,8 +74,12 @@ class RabbitConsumerSpec extends CatsEffectSuite {
     assertEquals(updated.getHeaders.get("custom-header"), "value")
   }
 
-  private def order(eventId: String = "11111111-1111-4111-8111-111111111111", customerId: String = "22222222-2222-4222-8222-222222222222") =
-    com.polyglider.model.OrderPlaced(eventId, "SKU-1", 2, customerId, "2024-01-01T00:00:00Z")
+  private def order(
+    eventId: String = "11111111-1111-4111-8111-111111111111",
+    customerId: String = "22222222-2222-4222-8222-222222222222",
+    version: String = "1"
+  ) =
+    com.polyglider.model.OrderPlaced(eventId, "SKU-1", 2, customerId, "2024-01-01T00:00:00Z", version)
 
   test("validateUuids accepts an order with valid eventId and customerId") {
     assertEquals(RabbitConsumer.validateUuids(order()), Right(order()))
@@ -89,6 +93,25 @@ class RabbitConsumerSpec extends CatsEffectSuite {
   test("validateUuids rejects an invalid customerId") {
     val bad = order(customerId = "not-a-uuid")
     assertEquals(RabbitConsumer.validateUuids(bad), Left(RabbitConsumer.InvalidUuidException("customerId", "not-a-uuid")))
+  }
+
+  test("validateVersion accepts a supported version") {
+    assertEquals(RabbitConsumer.validateVersion(order(version = "1")), Right(order(version = "1")))
+  }
+
+  test("validateVersion rejects an unrecognized version") {
+    val bad = order(version = "2")
+    assertEquals(RabbitConsumer.validateVersion(bad), Left(RabbitConsumer.UnsupportedSchemaVersionException("2")))
+  }
+
+  test("a message with an unrecognized version is classified as a permanent failure (straight to DLX, no retry)") {
+    import com.polyglider.consumer.ProcessingFailure
+    import com.polyglider.consumer.ProcessingFailure.PermanentFailure
+
+    val bad = order(version = "2")
+    val result = RabbitConsumer.validateUuids(bad).flatMap(RabbitConsumer.validateVersion)
+    val err = result.swap.getOrElse(fail("expected validation to reject the unrecognized version"))
+    assertEquals(ProcessingFailure.classify(err), PermanentFailure(err))
   }
 
   test("eventIdOf extracts eventId from a valid OrderPlaced body") {

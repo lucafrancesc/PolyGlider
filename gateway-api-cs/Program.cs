@@ -148,9 +148,14 @@ public record OrderRequest(string Sku, int Quantity, Guid CustomerId);
 
 public record OrderPlacedEvent(Guid EventId, string Sku, int Quantity, Guid CustomerId, DateTime Timestamp)
 {
+    // Schema version of this envelope shape -- see ADR-006. The gateway only ever emits the
+    // current version; older consumers (or a version bump on the Scala side) read it to decide
+    // whether they understand this payload at all, rather than guessing from field presence.
+    public string Version { get; init; } = "1";
+
     // Carries the W3C trace context from the HTTP request to RabbitMqPublisherWorker so it can
     // be injected into the RabbitMQ message headers. [JsonIgnore] keeps it out of the on-wire
-    // JSON body -- the 5-field event schema is a pact-verified contract with the Scala consumer.
+    // JSON body -- the 6-field event schema is a pact-verified contract with the Scala consumer.
     [System.Text.Json.Serialization.JsonIgnore]
     public string? TraceParent { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]

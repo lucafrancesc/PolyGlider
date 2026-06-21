@@ -28,6 +28,7 @@ class OrderPlacedEventContractSpec extends CatsEffectSuite {
       .integerType("quantity", Integer.valueOf(5))
       .uuid("customerId", exampleCustomerId)
       .stringType("timestamp", exampleTimestamp)
+      .stringType("version", "1")
 
     val pact: MessagePact = new MessagePactBuilder()
       .consumer("scala-engine")
@@ -50,7 +51,8 @@ class OrderPlacedEventContractSpec extends CatsEffectSuite {
            |  "sku": "SKU-001",
            |  "quantity": 5,
            |  "customerId": "$exampleCustomerId",
-           |  "timestamp": "$exampleTimestamp"
+           |  "timestamp": "$exampleTimestamp",
+           |  "version": "1"
            |}""".stripMargin
 
       result <- IO(parse(exampleJson).flatMap(_.as[OrderPlaced]))
@@ -62,7 +64,23 @@ class OrderPlacedEventContractSpec extends CatsEffectSuite {
         assertEquals(order.quantity, 5)
         assertEquals(order.customerId, exampleCustomerId)
         assertEquals(order.timestamp, exampleTimestamp)
+        assertEquals(order.version, "1")
       }
     } yield ()
+  }
+
+  test("consumer deserializes a pre-#41 payload with no version field, defaulting to \"1\"") {
+    val exampleJson =
+      s"""{
+         |  "eventId": "$exampleEventId",
+         |  "sku": "SKU-001",
+         |  "quantity": 5,
+         |  "customerId": "$exampleCustomerId",
+         |  "timestamp": "$exampleTimestamp"
+         |}""".stripMargin
+
+    val result = parse(exampleJson).flatMap(_.as[OrderPlaced])
+    assert(result.isRight, s"consumer failed to deserialize a pre-existing 5-field payload: $result")
+    assertEquals(result.toOption.get.version, "1")
   }
 }
