@@ -16,13 +16,21 @@ die()     { echo -e "${RED}[run-all] ERROR:${RESET} $*" >&2; exit 1; }
 # ── cleanup on exit ────────────────────────────────────────────────────────────
 PIDS=()
 _CLEANUP_DONE=false
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   $_CLEANUP_DONE && return
   _CLEANUP_DONE=true
   echo ""
   log "Shutting down..."
   for pid in "${PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
+    kill_tree "$pid"
   done
   log "All services stopped."
 }
@@ -32,9 +40,10 @@ trap cleanup INT TERM EXIT
 # Usage: prefix_log "LABEL" colour command [args...]
 prefix_log() {
   local label="$1" colour="$2"; shift 2
-  "$@" 2>&1 | while IFS= read -r line; do
-    echo -e "${colour}[${label}]${RESET} ${line}"
-  done &
+  # Process substitution keeps $! pointing at the actual command, not the
+  # reader loop -- a plain `cmd | while ...; do ...; done &` would make $!
+  # the pipeline's last stage instead of the real sbt/dotnet process.
+  "$@" > >(while IFS= read -r line; do echo -e "${colour}[${label}]${RESET} ${line}"; done) 2>&1 &
   PIDS+=($!)
 }
 
