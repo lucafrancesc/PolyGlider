@@ -20,7 +20,6 @@ polyglider/                  <-- Git repository root
 │   └── Dockerfile
 │
 ├── run-all.sh               # Start all services (--analytics flag for Python worker)
-├── test-all.sh              # Run all test suites (--no-integration for unit-only)
 │
 └── tools/
     └── load-tester/         # Locust load tester (implemented)
