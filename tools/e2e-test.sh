@@ -41,6 +41,21 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
+# The gateway's health check only confirms its own RabbitMQ connection -- it says nothing about
+# whether the Scala engine has finished its own cold start (JVM boot, Flyway migrations, connect)
+# and is actually consuming yet. Right after a fresh `--build`, that can occasionally take longer
+# than the ledger-upsert poll below has headroom for (see #119), so wait for the engine's own
+# readiness signal before posting anything.
+log "Waiting for the Scala engine to finish startup and connect to RabbitMQ..."
+for i in $(seq 1 90); do
+  if docker compose -f "$REPO_ROOT/docker-compose.yml" --profile containerized logs engine 2>/dev/null | grep -q "Connected to RabbitMQ"; then
+    ok "Scala engine is connected and consuming."
+    break
+  fi
+  [ "$i" -eq 90 ] && die "Scala engine did not report a RabbitMQ connection in time."
+  sleep 1
+done
+
 # ── Post a uniquely-tagged order ────────────────────────────────────────────────
 SKU="E2E-$(date +%s)-$RANDOM"
 QUANTITY=3
