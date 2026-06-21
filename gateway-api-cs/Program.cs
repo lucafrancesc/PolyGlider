@@ -52,7 +52,16 @@ var app = builder.Build();
 // (e.g. the planned Redis rate limiter keying on client IP).
 var forwardedHeadersOptions = new ForwardedHeadersOptions
 {
-    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+    // nginx's `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` appends its own
+    // remote address to whatever X-Forwarded-For value (if any) the original request already
+    // carried, rather than overwriting it. ForwardLimit's default of 1 only consumes that
+    // outermost (nginx-added) hop, discarding anything the original caller set -- every
+    // request collapses onto nginx's own address regardless of what the caller sent. 2 walks
+    // one hop further left to the caller-supplied value; a request with no pre-existing header
+    // (the common case) still resolves correctly since the middleware stops once the header
+    // runs out of entries.
+    ForwardLimit = 2
 };
 forwardedHeadersOptions.KnownNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
