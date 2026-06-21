@@ -29,3 +29,6 @@ env/
 **/bin/
 **/obj/
 certs/
+
+# --- Personal scratch notes ---
+/Requirements.txt
