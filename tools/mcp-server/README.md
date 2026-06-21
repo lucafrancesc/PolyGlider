@@ -42,6 +42,7 @@ Default values (used when no `.env` is present):
 |----------|---------|
 | `POSTGRES_URL` | `postgresql://postgres:postgres@localhost:5432/polyglider_inventory` |
 | `GATEWAY_URL` | `http://localhost:5187` |
+| `GATEWAY_API_KEY` | unset — sent as `X-Api-Key` on `place_order` requests when present |
 
 ---
 
@@ -110,4 +111,4 @@ Tests mock `_get_conn`/`_put_conn` and `httpx.Client` directly, so no Postgres o
 - `list_inventory` should return rows if the Scala engine has processed at least one order
 - `place_order` requires the C# gateway to be running (`cd gateway-api-cs && dotnet run --project gateway-api-cs.csproj`)
 - If Postgres is down, tools return `{"error": "Database unavailable: ..."}` rather than crashing the session
-- If `Gateway__ApiKey` is set on the gateway (see the repo root README's [Security](../../README.md#security) section), set `GATEWAY_API_KEY` to the same value here — `place_order` forwards it as `X-Api-Key`.
+- `place_order` does **not** currently send an `X-Api-Key` header — if `Gateway__ApiKey` is set on the gateway (see the repo root README's [Security](../../README.md#security) section), `place_order` will get `401` with no way to configure a key on this side yet. Tracked in [#114](https://github.com/lucafrancesc/PolyGlider/issues/114).

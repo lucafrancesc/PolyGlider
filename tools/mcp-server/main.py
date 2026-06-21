@@ -10,6 +10,7 @@ Exposes four tools:
 Environment variables (all optional, defaults shown):
   POSTGRES_URL      postgresql://postgres:postgres@localhost:5432/polyglider_inventory
   GATEWAY_URL       http://localhost:5187
+  GATEWAY_API_KEY   (unset — sent as X-Api-Key on place_order requests when present)
   POSTGRES_POOL_MAX 10
   METRICS_PORT      9101
 """
@@ -38,6 +39,7 @@ POSTGRES_URL = os.getenv(
     "postgresql://postgres:postgres@localhost:5432/polyglider_inventory",
 )
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:5187")
+GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY")
 POSTGRES_POOL_MAX = int(os.getenv("POSTGRES_POOL_MAX", "10"))
 METRICS_PORT = int(os.getenv("METRICS_PORT", "9101"))
 
@@ -186,9 +188,10 @@ def place_order(sku: str, quantity: int, customer_id: str) -> dict:
         "quantity": quantity,
         "customerId": customer_id,
     }
+    headers = {"X-Api-Key": GATEWAY_API_KEY} if GATEWAY_API_KEY else {}
     try:
         with httpx.Client(timeout=10.0) as client:
-            response = client.post(f"{GATEWAY_URL}/api/orders", json=payload)
+            response = client.post(f"{GATEWAY_URL}/api/orders", json=payload, headers=headers)
         if response.status_code == 202:
             body = response.json()
             # eventId is generated once by the gateway and carried unchanged through the
