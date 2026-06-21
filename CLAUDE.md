@@ -12,6 +12,16 @@ docker-compose up -d   # starts RabbitMQ (:5672, management UI :15672), Postgres
 
 Default credentials: `guest`/`guest` (RabbitMQ), `postgres`/`postgres` (Postgres). Database name: `polyglider_inventory`.
 
+**If Testcontainers-backed tests hang or time out** (`DoobieSkuStorageSpec` in Scala, the C#
+gateway's `Category=Integration` suite, or `test-all.sh`/`./tools/e2e-test.sh` more generally):
+check for an active VPN client first. A VPN's killswitch/firewall rules can interfere with Docker
+bridge networking in a way that's easy to mistake for a Testcontainers or Docker config problem —
+the TCP handshake to a container's published port succeeds, but the actual protocol data exchange
+after that hangs and times out. Confirmed root cause on this project once: NordVPN running locally
+(see #131) caused exactly this symptom; disconnecting the VPN made every previously-flaky suite
+pass deterministically with no code or config changes. If you hit this, try disconnecting your VPN
+before assuming the test or the Docker setup is broken.
+
 ---
 
 ## C# Gateway (`gateway-api-cs/`)

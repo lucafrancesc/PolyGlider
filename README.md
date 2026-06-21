@@ -72,17 +72,26 @@ This mode is a separate code path from `./run-all.sh`, which always starts exact
 
 ## Test
 
-Each service is tested independently — see its README for the exact commands
-([`gateway-api-cs-tests/`](gateway-api-cs/README.md), [`processing-engine-scala/`](processing-engine-scala/README.md)).
-Contract tests have an ordering requirement; see [Contract tests](#contract-tests) below.
-
 ```bash
-# Full end-to-end pipeline test (builds + starts the containerized stack, posts
-# an order, and verifies it all the way through to a Postgres ledger upsert and
-# an MCP read-back). Slow; runs nightly in CI (.github/workflows/ci-e2e.yml) and
-# on demand — not part of the fast per-service test loop above.
-./tools/e2e-test.sh
+# All suites (requires Docker for the Testcontainers integration test)
+./test-all.sh
+
+# Unit tests only — no Docker needed
+./test-all.sh --no-integration
+
+# Also run the full end-to-end pipeline test (builds + starts the containerized
+# stack, posts an order, and verifies it all the way through to a Postgres ledger
+# upsert and an MCP read-back — see tools/e2e-test.sh). Slow; not run by default.
+./test-all.sh --e2e
 ```
+
+**If the Testcontainers-backed tests hang or time out** (`DoobieSkuStorageSpec`, the C# gateway's
+`Category=Integration` suite, or this script more generally), check whether a VPN client is
+running before suspecting the test or Docker setup itself. A VPN's killswitch/firewall rules can
+interfere with Docker's bridge networking in a way that looks identical to a broken test: the TCP
+handshake to a container's port succeeds, but the actual data exchange afterward hangs. This
+project hit exactly that with NordVPN (see [#131](https://github.com/lucafrancesc/PolyGlider/issues/131)) —
+disconnecting it made every previously-flaky suite pass deterministically, no code changes needed.
 
 ---
 
