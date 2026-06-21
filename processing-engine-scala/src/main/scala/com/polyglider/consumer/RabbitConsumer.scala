@@ -12,7 +12,7 @@ import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFai
 import com.polyglider.UuidUtils
 import com.polyglider.metrics.Metrics
 import com.polyglider.tracing.Tracing
-import io.opentelemetry.api.trace.{SpanKind, StatusCode}
+import io.opentelemetry.api.trace.{SpanKind, StatusCode, Tracer}
 
 import java.nio.charset.StandardCharsets
 import scala.concurrent.duration.{DurationLong, FiniteDuration}
@@ -72,10 +72,10 @@ object RabbitConsumer {
     * the span -- recording the exception and an ERROR status on failure so it doesn't just
     * silently end as if it succeeded.
     */
-  private[polyglider] def withSpan[A](properties: AMQP.BasicProperties)(io: IO[A]): IO[A] =
+  private[polyglider] def withSpan[A](properties: AMQP.BasicProperties, tracer: Tracer = Tracing.tracer)(io: IO[A]): IO[A] =
     IO.blocking {
       val parentCtx = Tracing.extract(properties.getHeaders)
-      Tracing.tracer.spanBuilder("process orders.placed")
+      tracer.spanBuilder("process orders.placed")
         .setParent(parentCtx)
         .setSpanKind(SpanKind.CONSUMER)
         .startSpan()

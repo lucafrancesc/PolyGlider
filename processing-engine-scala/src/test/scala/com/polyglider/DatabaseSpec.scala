@@ -5,17 +5,23 @@ import cats.effect.IO
 import doobie.util.transactor.Transactor
 import doobie.implicits._
 import com.polyglider.db.Database
+import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
 
 class DatabaseSpec extends CatsEffectSuite {
-  test("upsertSku inserts and updates ledger") {
-    import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
+
+  // Each test gets its own H2 in-memory database name so they stay isolated from one another.
+  private def h2Transactor(dbName: String): Transactor[IO] = {
     val cfg = new HikariConfig()
-    cfg.setJdbcUrl("jdbc:h2:mem:test;DB_CLOSE_DELAY=-1")
+    cfg.setJdbcUrl(s"jdbc:h2:mem:$dbName;DB_CLOSE_DELAY=-1")
     cfg.setUsername("sa")
     cfg.setPassword("")
     cfg.setMaximumPoolSize(4)
     val ds = new HikariDataSource(cfg)
-    val xa = Transactor.fromDataSource[IO](ds, scala.concurrent.ExecutionContext.global)
+    Transactor.fromDataSource[IO](ds, scala.concurrent.ExecutionContext.global)
+  }
+
+  test("upsertSku inserts and updates ledger") {
+    val xa = h2Transactor("test")
 
     val program = for {
       // create tables
@@ -45,13 +51,7 @@ class DatabaseSpec extends CatsEffectSuite {
   }
 
   test("order_count increments once per order regardless of quantity") {
-    import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
-    val cfg = new HikariConfig()
-    cfg.setJdbcUrl("jdbc:h2:mem:order_count;DB_CLOSE_DELAY=-1")
-    cfg.setUsername("sa")
-    cfg.setPassword("")
-    val ds = new HikariDataSource(cfg)
-    val xa = Transactor.fromDataSource[IO](ds, scala.concurrent.ExecutionContext.global)
+    val xa = h2Transactor("order_count")
 
     val upsert = (sku: String, qty: Int) => for {
       _ <- sql"UPDATE ledger SET qty = qty + $qty, order_count = order_count + 1 WHERE sku = $sku".update.run.transact(xa)
@@ -78,13 +78,7 @@ class DatabaseSpec extends CatsEffectSuite {
   }
 
   test("processed_events rejects duplicate event_id") {
-    import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
-    val cfg = new HikariConfig()
-    cfg.setJdbcUrl("jdbc:h2:mem:dedup;DB_CLOSE_DELAY=-1")
-    cfg.setUsername("sa")
-    cfg.setPassword("")
-    val ds = new HikariDataSource(cfg)
-    val xa = Transactor.fromDataSource[IO](ds, scala.concurrent.ExecutionContext.global)
+    val xa = h2Transactor("dedup")
 
     val program = for {
       _ <- sql"CREATE TABLE processed_events (event_id VARCHAR PRIMARY KEY)".update.run.transact(xa)
@@ -98,13 +92,7 @@ class DatabaseSpec extends CatsEffectSuite {
   }
 
   test("duplicate event_id does not increment order_count") {
-    import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
-    val cfg = new HikariConfig()
-    cfg.setJdbcUrl("jdbc:h2:mem:dedup_count;DB_CLOSE_DELAY=-1")
-    cfg.setUsername("sa")
-    cfg.setPassword("")
-    val ds = new HikariDataSource(cfg)
-    val xa = Transactor.fromDataSource[IO](ds, scala.concurrent.ExecutionContext.global)
+    val xa = h2Transactor("dedup_count")
 
     // Simulate the full upsertSku transaction: insert event, then upsert ledger
     val upsertWithDedup = (eventId: String, sku: String, qty: Int) =>
@@ -134,13 +122,7 @@ class DatabaseSpec extends CatsEffectSuite {
   }
 
   test("ledger rejects negative qty") {
-    import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
-    val cfg = new HikariConfig()
-    cfg.setJdbcUrl("jdbc:h2:mem:neg_qty;DB_CLOSE_DELAY=-1")
-    cfg.setUsername("sa")
-    cfg.setPassword("")
-    val ds = new HikariDataSource(cfg)
-    val xa = Transactor.fromDataSource[IO](ds, scala.concurrent.ExecutionContext.global)
+    val xa = h2Transactor("neg_qty")
 
     val program = for {
       _ <- sql"""

@@ -49,6 +49,7 @@ lazy val root = (project in file("."))
       "io.opentelemetry" % "opentelemetry-exporter-otlp" % "1.43.0",
 
       // Testing
+      "io.opentelemetry" % "opentelemetry-sdk-testing" % "1.43.0" % Test,
       "org.scalameta" %% "munit" % "1.3.3" % Test,
       "org.typelevel" %% "munit-cats-effect-3" % "1.0.7" % Test,
       "org.testcontainers" % "testcontainers" % "1.19.0" % Test,

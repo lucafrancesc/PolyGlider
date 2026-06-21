@@ -2,12 +2,18 @@ package com.polyglider
 
 import cats.effect.IO
 import cats.effect.std.Queue
+import com.rabbitmq.client.AMQP
+import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.`export`.SimpleSpanProcessor
 import munit.CatsEffectSuite
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import com.polyglider.consumer.RabbitConsumer
 
 import scala.concurrent.duration._
+import scala.jdk.CollectionConverters._
 
 class RabbitConsumerSpec extends CatsEffectSuite {
   type Delivery = RabbitConsumer.Delivery
@@ -123,6 +129,43 @@ class RabbitConsumerSpec extends CatsEffectSuite {
     } yield {
       assertEquals(result, 3)
       assertEquals(finalAttempts, 3)
+    }
+  }
+
+  private def withTestTracer[A](f: (io.opentelemetry.api.trace.Tracer, InMemorySpanExporter) => IO[A]): IO[A] = {
+    val exporter = InMemorySpanExporter.create()
+    val tracerProvider = SdkTracerProvider.builder()
+      .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+      .build()
+    val tracer = tracerProvider.get("test")
+    f(tracer, exporter).guarantee(IO.blocking(tracerProvider.shutdown()).void)
+  }
+
+  test("withSpan ends the span with no error status when the wrapped IO succeeds") {
+    withTestTracer { (tracer, exporter) =>
+      for {
+        result <- RabbitConsumer.withSpan(new AMQP.BasicProperties(), tracer)(IO.pure(42))
+        spans  <- IO.blocking(exporter.getFinishedSpanItems.asScala.toList)
+      } yield {
+        assertEquals(result, 42)
+        assertEquals(spans.map(_.getName), List("process orders.placed"))
+        assertEquals(spans.head.getStatus.getStatusCode, StatusCode.UNSET)
+      }
+    }
+  }
+
+  test("withSpan records the exception and sets ERROR status when the wrapped IO fails") {
+    withTestTracer { (tracer, exporter) =>
+      val boom = new RuntimeException("boom")
+      for {
+        result <- RabbitConsumer.withSpan(new AMQP.BasicProperties(), tracer)(IO.raiseError[Int](boom)).attempt
+        spans  <- IO.blocking(exporter.getFinishedSpanItems.asScala.toList)
+      } yield {
+        assert(result.isLeft, "the original error must still propagate")
+        assertEquals(spans.map(_.getName), List("process orders.placed"))
+        assertEquals(spans.head.getStatus.getStatusCode, StatusCode.ERROR)
+        assertEquals(spans.head.getEvents.asScala.map(_.getName).toList, List("exception"))
+      }
     }
   }
 }
