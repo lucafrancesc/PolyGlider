@@ -197,17 +197,38 @@ The gateway generates `eventId` and `timestamp`; clients only send the three fie
 
 ## Accessing infrastructure
 
-**RabbitMQ management UI** — http://localhost:15672
+**RabbitMQ management UI** — http://localhost:15672 (`guest`/`guest`)
+
+Useful things to check there: the `orders.placed` queue (consumer lag — messages ready vs. unacked), `dlx.orders.placed` (failed messages awaiting reprocessing), and `needs-attention.orders.placed` (escalated, permanent failures — should be empty in steady state). The "Connections" and "Channels" tabs show whether the gateway/engine are currently connected.
+
+Equivalent from the CLI, if you'd rather not open the UI:
+```bash
+docker exec polyglider_broker rabbitmqctl list_queues name messages messages_ready messages_unacknowledged
+docker exec polyglider_broker rabbitmqctl list_connections
+```
 
 **Postgres**
 ```bash
 psql -h localhost -p 5432 -U postgres -d polyglider_inventory
+```
+```sql
+select * from ledger order by sku;              -- current qty/order_count per SKU
+select count(*) from processed_events;           -- dedup table size
 ```
 
 **Redis** (rate-limit counters only — no persistence, safe to flush)
 ```bash
 redis-cli -h localhost -p 6379
 ```
+Keys follow `ratelimit:orders:<client-ip>` (set in `gateway-api-cs/Services/RedisRateLimitFilter.cs`), one fixed 60s window per client IP:
+```
+KEYS ratelimit:orders:*        # all clients currently being rate-limited
+GET ratelimit:orders:<ip>      # request count so far in the current window
+TTL ratelimit:orders:<ip>      # seconds left in that window (-2 means the key/window expired)
+DBSIZE                         # number of distinct client IPs tracked right now
+FLUSHDB                        # clear all counters — safe, per the note above
+```
+Note: `KEYS` is fine here given the tiny, short-lived keyspace; prefer `SCAN` for anything at production scale.
 
 Default credentials are in `.env.example`. Never commit a `.env` file with real secrets.
 
@@ -228,9 +249,38 @@ All three services expose Prometheus metrics:
 
 All three services run on the host (`run-all.sh`), not inside `docker-compose.yml`, so Prometheus reaches them through the docker-to-host gateway rather than compose service names. The gateway binds to `0.0.0.0:5187` (not `localhost`) in `Properties/launchSettings.json` specifically so that gateway is reachable — binding to loopback only would make it unreachable from inside the Prometheus container.
 
+### Querying Prometheus directly
+
+http://localhost:9090/graph lets you run PromQL ad hoc. A few starting points (paste into the query box, hit "Execute", then switch to the "Graph" tab):
+
+```promql
+rate(gateway_orders_received_total[1m])                 # orders/sec hitting the gateway
+gateway_order_buffer_used                                # current in-process channel depth (cap 10,000)
+rate(gateway_orders_rejected_total[1m])                   # rejections/sec, broken out by the `reason` label
+histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))  # p99 HTTP latency
+```
+
+http://localhost:9090/targets shows scrape health for all three services — check this first if a Grafana panel is empty, since a red/down target means Prometheus isn't reaching that service at all (most often `run-all.sh` isn't running, or the docker-to-host gateway path described above is broken). http://localhost:9090/alerts shows the live state of `DlqDepthHigh`, `NeedsAttentionDepthNonZero`, `CircuitBreakerOpenTooLong`, and `ProcessingLatencySLOBudgetBurn` (see `docs/slo.md`).
+
+To add a new graph/metric permanently rather than querying ad hoc, edit `observability/prometheus/prometheus.yml` (scrape targets) or `observability/prometheus/alerts.yml` / `slo-rules.yml` (alerting and recording rules), then `docker compose restart prometheus` to pick up the change — no rebuild needed since the files are volume-mounted.
+
+### Using the Grafana dashboard
+
+http://localhost:3000, default login `admin`/`admin` (override via `GRAFANA_USER`/`GRAFANA_PASSWORD` in `.env`). The "PolyGlider Resilience" dashboard is pre-provisioned and pinned in the default folder — no manual setup needed, it's loaded automatically from `observability/grafana/dashboards/polyglider-resilience.json` via the provisioning config in `observability/grafana/provisioning/`.
+
+To build your own panel: "+" → "New dashboard" → "Add visualization" → pick the pre-wired "Prometheus" data source (already provisioned, no need to add one) → enter a PromQL query (the same ones as above work) → set panel title/unit → "Save dashboard". To edit the existing dashboard's JSON directly (e.g. to add a panel and keep it under version control), edit `observability/grafana/dashboards/polyglider-resilience.json` and restart Grafana (`docker compose restart grafana`) to reload it — editing in the UI alone won't persist across a container recreate, since it's provisioned read-only from that file by default.
+
 ### Distributed tracing
 
 **Jaeger** — http://localhost:16686. Both `docker compose up -d` (shared infra, not behind the `containerized` profile) and `run-all.sh` bring it up, since host-based and containerized services both need it.
+
+What it's for: Prometheus/Grafana tell you *that* something is slow or failing in aggregate (e.g. p99 latency spiked); Jaeger lets you pick one specific order and see exactly where its time went across all three services, in order, on one timeline. Useful when a metric looks bad and you want to find a concrete example to dig into, e.g. "find the slowest 1% of orders and see if they're all stuck in the same place."
+
+How to use it:
+1. Open http://localhost:16686
+2. In "Service", pick `gateway-api-cs` (or whatever `OTEL_SERVICE_NAME`/`Otel:ServiceName` is set to for the Scala engine)
+3. Optionally set "Tags" to filter, e.g. `http.method=POST`, or sort by "Longest First" to find slow outliers
+4. Click "Find Traces", then click into one — each row in the waterfall view is a span; nesting shows you parent/child relationships across services
 
 The C# gateway and Scala engine each export traces via OTLP/gRPC to Jaeger, defaulting to `http://localhost:4317` (overridable via `OTEL__EXPORTERENDPOINT` for the gateway, `OTEL_EXPORTER_OTLP_ENDPOINT` for the engine — see `.env.example`). A trace covers the full order pipeline:
 
@@ -239,6 +289,18 @@ The C# gateway and Scala engine each export traces via OTLP/gRPC to Jaeger, defa
 - A `process orders.placed` consumer span in the Scala engine's `RabbitConsumer`, parented onto the W3C `traceparent` header the gateway injected into the RabbitMQ message, wrapping the dedup/upsert/ack
 
 A message with no trace headers (e.g. a DLQ retry that's been through several backoff hops) still produces a span — just unparented — rather than failing.
+
+### nginx logs
+
+nginx (`polyglider_nginx`) only runs in the **containerized** run mode (`docker compose --profile containerized up -d --build --scale gateway=N`) — it's not part of `run-all.sh`, so there's nothing to tail there.
+`nginx/nginx.conf` doesn't define a custom `log_format`, so the official nginx image's default access/error logs apply, and that image symlinks both to stdout/stderr — meaning `docker logs` is the only place to see them (there's no log file inside the container to `exec` in and `tail`):
+
+```bash
+docker logs -f polyglider_nginx          # follow both access + error logs live
+docker logs --tail 100 polyglider_nginx  # last 100 lines
+```
+
+Access log lines show one entry per request proxied to a `gateway` replica, in the default nginx combined format (client IP, timestamp, request line, status, bytes, referer, user-agent); error log lines show upstream connection failures (e.g. a dead replica before `proxy_next_upstream` retries the next one).
 
 ---
 

@@ -89,8 +89,42 @@ The `mcp[cli]` package includes a local inspector:
 ```bash
 source .venv/bin/activate
 mcp dev main.py
-# Opens http://localhost:5173 — call tools directly from the browser UI
+# Opens http://localhost:6274 (with an MCP_PROXY_AUTH_TOKEN query param) — call tools directly from the browser UI
 ```
+
+### How it works
+
+`mcp dev` launches the [MCP Inspector](https://github.com/modelcontextprotocol/inspector), which starts two local processes:
+
+- A **proxy server** on port `6277` — speaks MCP to `main.py` over stdio (the same transport Claude Code uses), bridging it to HTTP/WebSocket for the browser
+- A **client UI** on port `6274` — a web app that connects to the proxy and lets you browse this server's tools, fill in arguments via a generated form, and inspect raw request/response JSON
+
+A session token (printed in the terminal output, also embedded in the URL `mcp dev` prints) authenticates the browser to the proxy — without it, requests are rejected. This is the same `main.py` process that `claude mcp add` would otherwise launch for Claude Code, so anything you can verify here behaves identically when called from Claude.
+
+### Inspector CLI mode
+
+For scripting or quick one-off checks without a browser, the inspector also has a non-interactive `--cli` mode:
+
+```bash
+# List all tools this server exposes, with their input schemas
+npx @modelcontextprotocol/inspector --cli .venv/bin/python main.py --method tools/list
+
+# Call a tool with arguments
+npx @modelcontextprotocol/inspector --cli .venv/bin/python main.py --method tools/call \
+  --tool-name list_inventory
+
+npx @modelcontextprotocol/inspector --cli .venv/bin/python main.py --method tools/call \
+  --tool-name get_sku_quantity --tool-arg sku=LAPTOP-001
+
+npx @modelcontextprotocol/inspector --cli .venv/bin/python main.py --method tools/call \
+  --tool-name list_recent_events --tool-arg limit=5
+
+npx @modelcontextprotocol/inspector --cli .venv/bin/python main.py --method tools/call \
+  --tool-name place_order --tool-arg sku=LAPTOP-001 --tool-arg quantity=2 \
+  --tool-arg customer_id=22222222-2222-4222-8222-222222222222
+```
+
+Each call starts a fresh `main.py` process, runs the one request, prints the JSON result, and exits — no UI, no long-running session. Useful in shell scripts or CI smoke checks where you want to assert a tool's output without going through Claude.
 
 ---
 
