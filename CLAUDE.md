@@ -104,6 +104,18 @@ Exposes inventory state and order placement as MCP tools (stdio transport). The 
 cd tools/mcp-server
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+# or: ./setup.sh
+```
+
+**Tests:**
+```bash
+pip install -r requirements-dev.txt
+pytest   # mocks _get_conn/_put_conn and httpx.Client; no Postgres or gateway needed
+```
+
+**Interactive testing (without Claude):**
+```bash
+mcp dev main.py   # opens the MCP Inspector at http://localhost:6274
 ```
 
 Register once with Claude Code:
@@ -116,6 +128,7 @@ claude mcp add polyglider-inventory \
 Config via env vars (defaults work with `docker-compose up -d`):
 - `POSTGRES_URL` — default `postgresql://postgres:postgres@localhost:5432/polyglider_inventory`
 - `GATEWAY_URL` — default `http://localhost:5187`
+- `GATEWAY_API_KEY` — unset by default; sent as `X-Api-Key` on `place_order` requests when set (needed only if `Gateway__ApiKey` is configured on the gateway)
 
 ---
 
