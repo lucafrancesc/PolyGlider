@@ -6,10 +6,11 @@ package com.polyglider.consumer
   *  - JSON parsing/decoding errors (circe `ParsingFailure` / `DecodingFailure`) mean the
   *    payload itself is malformed. Retrying won't change the bytes on the wire, so these
   *    are Permanent.
-  *  - Postgres integrity constraint violations (SQLState class "23", e.g. the
-  *    `processed_events` PK violation on a duplicate `eventId`) reflect a business-rule
+  *  - Postgres integrity constraint violations (SQLState class "23") reflect a business-rule
   *    conflict baked into the input itself, not the infrastructure. Retrying produces the
-  *    same conflict, so these are Permanent.
+  *    same conflict, so these are Permanent. (Duplicate `eventId`s no longer land here: the
+  *    `processed_events` insert is `ON CONFLICT DO NOTHING`, so a dup is an idempotent ack,
+  *    not a thrown exception.)
   *  - Postgres connection/availability errors (SQLState classes "08" connection exception,
   *    "53" insufficient resources, "57" operator intervention, "58" system error) and
   *    generic I/O or timeout failures are infrastructure blips that are likely to clear up
