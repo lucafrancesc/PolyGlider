@@ -91,6 +91,8 @@ services:
       - RABBITMQ__PASSWORD=${RABBITMQ_PASS:-guest}
       - REDIS__CONNECTIONSTRING=redis:6379
       - OTEL__EXPORTERENDPOINT=http://jaeger:4317
+      - Gateway__ApiKey=${GATEWAY_API_KEY:-}
+      - GATEWAY__RATELIMITPERMINUTE=${GATEWAY_RATELIMITPERMINUTE:-100}
     depends_on:
       - message-broker
       - redis
