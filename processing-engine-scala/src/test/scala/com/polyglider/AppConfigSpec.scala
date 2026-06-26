@@ -14,7 +14,7 @@ class AppConfigSpec extends FunSuite {
         assertEquals(cfg.summaryEvery, 10L)
         assertEquals(cfg.retryPolicy.maxRetries, 5)
         assertEquals(cfg.reprocessorPolicy.maxRetries, 3)
-        assertEquals(cfg.circuitBreakerMaxFailures, 5)
+        assertEquals(cfg.circuitBreakerMaxFailures, 3)
         assertEquals(cfg.metricsPort, 9100)
       case Left(err) =>
         fail(s"Expected Right but got Left: $err")
