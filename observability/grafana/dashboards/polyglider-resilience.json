@@ -281,6 +281,37 @@
           "max": 1
         }
       }
+    },
+    {
+      "id": 17,
+      "title": "Consumer internal queue depth (capacity 1000)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 53 },
+      "targets": [
+        { "expr": "polyglider_consumer_internal_queue_depth", "legendFormat": "queue depth" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 800, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 18,
+      "title": "Consumer queue overflow rate (nacks to DLX from full internal queue)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 53 },
+      "targets": [
+        { "expr": "rate(polyglider_consumer_queue_overflow_total[1m])", "legendFormat": "overflows/s" }
+      ]
     }
   ]
 }

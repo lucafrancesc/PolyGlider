@@ -19,6 +19,15 @@ groups:
           summary: "needs-attention.orders.placed is non-empty"
           description: "This queue is meant to be empty in steady state — every message in it exhausted the DLQ reprocessor's retry budget or failed permanently on the first attempt and needs manual triage."
 
+      - alert: ConsumerInternalQueueNearFull
+        expr: polyglider_consumer_internal_queue_depth > 800
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer internal queue above 80% capacity"
+          description: "Internal delivery queue depth is {{ $value }}/1000. Nacks to DLX may follow. Check worker throughput and Postgres connection health."
+
       - alert: CircuitBreakerOpenTooLong
         expr: polyglider_circuit_breaker_state{name="postgres-write"} == 2
         for: 60s
