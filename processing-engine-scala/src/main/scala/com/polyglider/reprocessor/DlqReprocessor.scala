@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import org.typelevel.log4cats.Logger
 import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
 import com.polyglider.storage.UpsertResult
-import com.polyglider.consumer.{MessageHandler, RetryPolicy}
+import com.polyglider.consumer.{Delivery, MessageHandler, RetryPolicy, Topology}
 import com.polyglider.consumer.ProcessingFailure
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
 import com.polyglider.metrics.Metrics
@@ -37,14 +37,6 @@ object DlqReprocessor {
     multiplier = 2.0,
     maxJitter = 1.second,
     queuePrefix = "dlq-reprocess.orders.placed"
-  )
-
-  // private[polyglider] so tests in com.polyglider can reference the type
-  private[polyglider] case class Delivery(
-    channel: Channel,
-    deliveryTag: Long,
-    body: Array[Byte],
-    properties: AMQP.BasicProperties = new AMQP.BasicProperties()
   )
 
   private[polyglider] def reprocessCountOf(properties: AMQP.BasicProperties): Int =
@@ -104,14 +96,14 @@ object DlqReprocessor {
         val ch = conn.createChannel()
 
         // Same topology the main consumer declares; redeclaring with identical args is a no-op.
-        ch.exchangeDeclare("dlx.orders.exchange", "fanout", true)
-        ch.queueDeclare("dlx.orders.placed", true, false, false, null)
-        ch.queueBind("dlx.orders.placed", "dlx.orders.exchange", "")
+        ch.exchangeDeclare(Topology.DlxExchange, "fanout", true)
+        ch.queueDeclare(Topology.DlxQueue, true, false, false, null)
+        ch.queueBind(Topology.DlxQueue, Topology.DlxExchange, "")
 
         // Genuinely-manual escalation path: a human has to look at this queue.
-        ch.exchangeDeclare("needs-attention.exchange", "fanout", true)
-        ch.queueDeclare("needs-attention.orders.placed", true, false, false, null)
-        ch.queueBind("needs-attention.orders.placed", "needs-attention.exchange", "")
+        ch.exchangeDeclare(Topology.NeedsAttentionExchange, "fanout", true)
+        ch.queueDeclare(Topology.NeedsAttentionQueue, true, false, false, null)
+        ch.queueBind(Topology.NeedsAttentionQueue, Topology.NeedsAttentionExchange, "")
 
         // One retry-tier queue per attempt: fixed TTL delays redelivery, then dead-letters
         // back into dlx.orders.exchange (fanout, so the routing key is irrelevant) where this
@@ -119,7 +111,7 @@ object DlqReprocessor {
         (1 to retryPolicy.maxRetries).foreach { tier =>
           val retryArgs = new java.util.HashMap[String, AnyRef]()
           retryArgs.put("x-message-ttl", java.lang.Long.valueOf(retryPolicy.delayFor(tier).toMillis))
-          retryArgs.put("x-dead-letter-exchange", "dlx.orders.exchange")
+          retryArgs.put("x-dead-letter-exchange", Topology.DlxExchange)
           ch.queueDeclare(retryPolicy.retryQueueName(tier), true, false, false, retryArgs)
         }
         ch.basicQos(1)
@@ -132,17 +124,17 @@ object DlqReprocessor {
           }
         }
 
-        ch.basicConsume("dlx.orders.placed", false, consumer)
+        ch.basicConsume(Topology.DlxQueue, false, consumer)
         (conn, ch, host, port)
       })( { case (conn, ch, _, _) => IO.blocking(ch.close()) *> IO.blocking(conn.close()) })
 
-      _ <- Resource.eval(connRes match { case (_, _, host, port) => logger.info(s"DLQ reprocessor connected to RabbitMQ at $host:$port, consuming from dlx.orders.placed") })
+      _ <- Resource.eval(connRes match { case (_, _, host, port) => logger.info(s"DLQ reprocessor connected to RabbitMQ at $host:$port, consuming from ${Topology.DlxQueue}") })
 
       dlqChannel = connRes._2
       // needs-attention.orders.placed is meant to be empty in steady state, same as
       // dlx.orders.placed — anything sitting in either is a signal something needs a human.
       _ <- Resource.make(
-        (List("dlx.orders.placed", "needs-attention.orders.placed").traverse_ { queueName =>
+        (List(Topology.DlxQueue, Topology.NeedsAttentionQueue).traverse_ { queueName =>
           channelMutex.lock.surround(IO.blocking(dlqChannel.queueDeclarePassive(queueName).getMessageCount))
             .flatMap(depth => IO.delay(Metrics.dlqDepth.labels(queueName).set(depth.toDouble)))
             .handleErrorWith(e => logger.warn(e)(s"Failed to poll $queueName depth"))
@@ -156,7 +148,7 @@ object DlqReprocessor {
           def escalate(reason: String, attempts: Int): IO[Unit] =
             channelMutex.lock.surround(IO.blocking {
               val props = withReprocessAttempt(d.properties, attempts, reason)
-              d.channel.basicPublish("", "needs-attention.orders.placed", props, d.body)
+              d.channel.basicPublish("", Topology.NeedsAttentionQueue, props, d.body)
             }) *> ack
 
           def retryReprocess(eventId: String, reason: String): IO[Unit] = {
