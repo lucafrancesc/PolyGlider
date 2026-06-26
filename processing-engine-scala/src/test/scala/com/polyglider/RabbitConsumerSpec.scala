@@ -51,6 +51,21 @@ class RabbitConsumerSpec extends CatsEffectSuite {
     }
   }
 
+  test("handleOrDrop increments the overflow counter when the queue is full") {
+    import com.polyglider.metrics.Metrics
+
+    val before = Metrics.consumerQueueOverflows.labels().get()
+    for {
+      queue <- Queue.bounded[IO, Delivery](1)
+      _     <- queue.offer(RabbitConsumer.Delivery(null, 0L, Array.emptyByteArray))
+      d      = RabbitConsumer.Delivery(null, 99L, Array.emptyByteArray)
+      _     <- RabbitConsumer.handleOrDrop(d, queue, IO.unit, summon[Logger[IO]])
+    } yield {
+      val after = Metrics.consumerQueueOverflows.labels().get()
+      assertEqualsDouble(after - before, 1.0, 0.0)
+    }
+  }
+
   test("retryCountOf defaults to 0 when no header is present") {
     val props = new com.rabbitmq.client.AMQP.BasicProperties()
     assertEquals(RabbitConsumer.retryCountOf(props), 0)

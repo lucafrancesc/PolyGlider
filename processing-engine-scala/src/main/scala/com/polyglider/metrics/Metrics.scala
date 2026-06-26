@@ -48,6 +48,16 @@ object Metrics {
     .labelNames("queue")
     .register()
 
+  val consumerQueueDepth: Gauge = Gauge.build()
+    .name("polyglider_consumer_internal_queue_depth")
+    .help("Current depth of the internal delivery queue between DefaultConsumer and worker fibers")
+    .register()
+
+  val consumerQueueOverflows: Counter = Counter.build()
+    .name("polyglider_consumer_queue_overflow_total")
+    .help("Number of deliveries nacked due to the internal queue being full")
+    .register()
+
   // Measured from the gateway's `timestamp` field (set when the order was accepted) to this
   // consumer successfully acking the message -- not a true distributed span duration, but
   // good enough to back an SLO without requiring clock-synced span export into Prometheus.

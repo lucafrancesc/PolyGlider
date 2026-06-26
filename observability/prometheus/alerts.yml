@@ -22,6 +22,15 @@ groups:
             These have exhausted all automated retry budgets or were classified as permanent failures.
             Manual intervention required. See runbook: docs/runbook/needs-attention-queue.md
 
+      - alert: ConsumerInternalQueueNearFull
+        expr: polyglider_consumer_internal_queue_depth > 800
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer internal queue above 80% capacity"
+          description: "Internal delivery queue depth is {{ $value }}/1000. Nacks to DLX may follow. Check worker throughput and Postgres connection health."
+
       - alert: CircuitBreakerOpenTooLong
         expr: polyglider_circuit_breaker_state{name="postgres-write"} == 2
         for: 60s

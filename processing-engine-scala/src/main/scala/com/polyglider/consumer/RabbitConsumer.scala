@@ -154,7 +154,10 @@ object RabbitConsumer {
   ): IO[Unit] =
     queue.tryOffer(d).flatMap {
       case true  => IO.unit
-      case false => nack *> logger.warn(s"Consumer queue full; nacking tag=${d.deliveryTag} — message routed to DLX")
+      case false =>
+        IO.delay(Metrics.consumerQueueOverflows.inc()) *>
+          nack *>
+          logger.warn(s"Consumer queue full; nacking tag=${d.deliveryTag} — message routed to DLX")
     }
 
   def start(
@@ -245,6 +248,11 @@ object RabbitConsumer {
         (channelMutex.lock.surround(IO.blocking(mainChannel.queueDeclarePassive(mainQueue).getMessageCount))
           .flatMap(depth => IO.delay(Metrics.dlqDepth.labels(mainQueue).set(depth.toDouble)))
           .handleErrorWith(e => logger.warn(e)(s"Failed to poll $mainQueue depth"))
+          *> IO.sleep(queueDepthPollInterval)).foreverM.start
+      )(_.cancel)
+
+      _ <- Resource.make(
+        (queue.size.flatMap(depth => IO.delay(Metrics.consumerQueueDepth.set(depth.toDouble)))
           *> IO.sleep(queueDepthPollInterval)).foreverM.start
       )(_.cancel)
 
