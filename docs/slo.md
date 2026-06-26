@@ -28,6 +28,8 @@ Dashboards (`observability/grafana/dashboards/polyglider-resilience.json`) show 
 
 **Validated:** a 160-second `postgres-kill` chaos run (`./tools/chaos/chaos.sh postgres-kill 160`) with orders posted throughout the outage produced 42 transient failures and 42 eventual successes — `dlx.orders.placed` depth stayed at 0 throughout; every retry succeeded within the main consumer's own 5-tier backoff budget once Postgres came back, without ever needing to escalate to the DLQ at all. This SLO is meant to catch outages that *do* spill into the DLQ (longer or repeated outages, or messages that exhaust the main consumer's retry budget) — see `docs/postmortems/2026-06-18-dlq-reprocessor-retry-before-escalate.md` for measured DLQ-reprocessor recovery/escalation behavior at longer outage durations (~200s recovers within budget, ~260s exhausts it and escalates).
 
+**Related alert:** `NeedsAttentionDepthNonZero` (severity: high) fires when `needs-attention.orders.placed` depth is non-zero for 5 minutes — the terminal escalation queue beyond `dlx.orders.placed`. See `docs/runbook/needs-attention-queue.md`.
+
 ### 3. Circuit breaker (`postgres-write`) open time
 
 **Target:** the `postgres-write` circuit breaker spends no more than 60 seconds in the `open` state, over a rolling 1-hour window.
