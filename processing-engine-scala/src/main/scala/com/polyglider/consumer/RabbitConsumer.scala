@@ -7,7 +7,7 @@ import org.typelevel.log4cats.Logger
 import io.circe.generic.auto._
 import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
 import com.polyglider.model.OrderPlaced
-import com.polyglider.storage.{SkuStorage, UpsertResult}
+import com.polyglider.storage.{SkuStats, UpsertResult}
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
 import com.polyglider.UuidUtils
 import com.polyglider.metrics.Metrics
@@ -158,13 +158,18 @@ object RabbitConsumer {
     }
 
   def start(
-    storage: SkuStorage,
+    handler: MessageHandler[OrderPlaced],
     logger: Logger[IO],
     workerCount: Int = 4,
     queueSize: Int = 1000,
     summaryEvery: Long = 10,
     retryPolicy: RetryPolicy = RetryPolicy.default,
-    queueDepthPollInterval: FiniteDuration = 15.seconds
+    queueDepthPollInterval: FiniteDuration = 15.seconds,
+    snapshotFn: IO[List[SkuStats]] = IO.pure(Nil),
+    mainQueue: String = "orders.placed",
+    mainExchange: String = "orders.exchange",
+    dlxExchange: String = "dlx.orders.exchange",
+    dlxQueue: String = "dlx.orders.placed"
   ): Resource[IO, Unit] =
     for {
       queue      <- Resource.eval(Queue.bounded[IO, Delivery](queueSize))
@@ -190,14 +195,14 @@ object RabbitConsumer {
         val conn = factory.newConnection()
         val ch = conn.createChannel()
 
-        ch.exchangeDeclare("orders.exchange", "topic", true)
-        ch.exchangeDeclare("dlx.orders.exchange", "fanout", true)
-        ch.queueDeclare("dlx.orders.placed", true, false, false, null)
-        ch.queueBind("dlx.orders.placed", "dlx.orders.exchange", "")
+        ch.exchangeDeclare(mainExchange, "topic", true)
+        ch.exchangeDeclare(dlxExchange, "fanout", true)
+        ch.queueDeclare(dlxQueue, true, false, false, null)
+        ch.queueBind(dlxQueue, dlxExchange, "")
         val queueArgs = new java.util.HashMap[String, AnyRef]()
-        queueArgs.put("x-dead-letter-exchange", "dlx.orders.exchange")
-        ch.queueDeclare("orders.placed", true, false, false, queueArgs)
-        ch.queueBind("orders.placed", "orders.exchange", "orders.placed")
+        queueArgs.put("x-dead-letter-exchange", dlxExchange)
+        ch.queueDeclare(mainQueue, true, false, false, queueArgs)
+        ch.queueBind(mainQueue, mainExchange, mainQueue)
         // Prefetch must scale with workerCount: a per-consumer prefetch of 1 lets RabbitMQ
         // deliver only one unacked message at a time regardless of how many worker fibers are
         // waiting on the internal queue, serializing throughput to one in-flight message no
@@ -212,8 +217,8 @@ object RabbitConsumer {
         (1 to retryPolicy.maxRetries).foreach { tier =>
           val retryArgs = new java.util.HashMap[String, AnyRef]()
           retryArgs.put("x-message-ttl", java.lang.Long.valueOf(retryPolicy.delayFor(tier).toMillis))
-          retryArgs.put("x-dead-letter-exchange", "orders.exchange")
-          retryArgs.put("x-dead-letter-routing-key", "orders.placed")
+          retryArgs.put("x-dead-letter-exchange", mainExchange)
+          retryArgs.put("x-dead-letter-routing-key", mainQueue)
           ch.queueDeclare(retryPolicy.retryQueueName(tier), true, false, false, retryArgs)
         }
 
@@ -225,21 +230,21 @@ object RabbitConsumer {
           }
         }
 
-        ch.basicConsume("orders.placed", false, consumer)
+        ch.basicConsume(mainQueue, false, consumer)
         (conn, ch, host, port)
       }, logger))( { case (conn, ch, _, _) => IO.blocking(ch.close()) *> IO.blocking(conn.close()) })
 
-      _ <- Resource.eval(connRes match { case (_, _, host, port) => logger.info(s"Connected to RabbitMQ at $host:$port, consuming from orders.placed") })
+      _ <- Resource.eval(connRes match { case (_, _, host, port) => logger.info(s"Connected to RabbitMQ at $host:$port, consuming from $mainQueue") })
 
       mainChannel = connRes._2
-      // Consumer-lag proxy: how many messages are sitting in orders.placed waiting to be
+      // Consumer-lag proxy: how many messages are sitting in mainQueue waiting to be
       // delivered. Unlike dlx.orders.placed/needs-attention.orders.placed (which should be
       // near-zero in steady state), this one is expected to fluctuate with normal traffic --
       // it's useful as a rate-of-change/trend signal rather than a fixed alert threshold.
       _ <- Resource.make(
-        (channelMutex.lock.surround(IO.blocking(mainChannel.queueDeclarePassive("orders.placed").getMessageCount))
-          .flatMap(depth => IO.delay(Metrics.dlqDepth.labels("orders.placed").set(depth.toDouble)))
-          .handleErrorWith(e => logger.warn(e)("Failed to poll orders.placed depth"))
+        (channelMutex.lock.surround(IO.blocking(mainChannel.queueDeclarePassive(mainQueue).getMessageCount))
+          .flatMap(depth => IO.delay(Metrics.dlqDepth.labels(mainQueue).set(depth.toDouble)))
+          .handleErrorWith(e => logger.warn(e)(s"Failed to poll $mainQueue depth"))
           *> IO.sleep(queueDepthPollInterval)).foreverM.start
       )(_.cancel)
 
@@ -251,7 +256,7 @@ object RabbitConsumer {
 
             def retryWithBackoff: IO[Unit] = {
               val attemptsSoFar = retryCountOf(d.properties)
-              val eventId = eventIdOf(d.body)
+              val eventId = handler.eventIdOf(d.body)
               if (attemptsSoFar >= retryPolicy.maxRetries) {
                 logger.warn(s"Exceeded max retries (${retryPolicy.maxRetries}) for eventId=$eventId tag=${d.deliveryTag}; routing to DLX") *> nackToDlx
               } else {
@@ -273,10 +278,10 @@ object RabbitConsumer {
 
             val task = withSpan(d.properties) {
               for {
-                parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
-                order  <- IO.fromEither(validateUuids(parsed).flatMap(validateVersion))
+                parsed <- IO.fromEither(handler.decode(d.body))
+                order  <- IO.fromEither(handler.validate(parsed))
                 _ <- logger.info(s"Message received: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
-                result <- storage.upsertSku(order.eventId, order.sku, order.quantity)
+                result <- handler.process(order)
                 _ <- result match {
                   case UpsertResult.Applied =>
                     logger.info(s"Stored to ledger: eventId=${order.eventId} sku=${order.sku} qty=${order.quantity}")
@@ -288,12 +293,12 @@ object RabbitConsumer {
                 _ <- recordProcessingLatency(order.timestamp, now, logger)
                 _ <- IO.delay(Metrics.messagesProcessed.inc())
                 n <- counter.updateAndGet(_ + 1)
-                _ <- if (n % summaryEvery == 0) logSnapshot(storage, logger) else IO.unit
+                _ <- if (n % summaryEvery == 0) logSnapshot(snapshotFn, logger) else IO.unit
               } yield ()
             }
 
             task.handleErrorWith { err =>
-              val eventId = eventIdOf(d.body)
+              val eventId = handler.eventIdOf(d.body)
               ProcessingFailure.classify(err) match {
                 case PermanentFailure(cause) =>
                   IO.delay(Metrics.permanentFailures.inc()) *>
@@ -308,9 +313,9 @@ object RabbitConsumer {
       )(fs => fs.traverse_(_.cancel))
     } yield ()
 
-  private def logSnapshot(storage: SkuStorage, logger: Logger[IO]): IO[Unit] =
+  private def logSnapshot(snapshotFn: IO[List[SkuStats]], logger: Logger[IO]): IO[Unit] =
     for {
-      stats  <- storage.snapshot
+      stats  <- snapshotFn
       total   = stats.foldLeft((0L, 0L)) { case ((orders, units), s) => (orders + s.orderCount, units + s.qty) }
       _      <- logger.info(s"── Analytics snapshot (${total._1} orders, ${total._2} units) ──")
       _      <- stats.traverse_(s => logger.info(f"  ${s.sku}%-22s orders=${s.orderCount}%-8d units=${s.qty}"))

@@ -1,7 +1,7 @@
 package com.polyglider
 
 import cats.effect.*
-import com.polyglider.consumer.{RabbitConsumer, RetryPolicy}
+import com.polyglider.consumer.{MessageHandler, OrderPlacedHandler, RabbitConsumer, RetryPolicy}
 import com.polyglider.reprocessor.DlqReprocessor
 import com.polyglider.resilience.CircuitBreaker
 import com.polyglider.metrics.Metrics
@@ -86,8 +86,9 @@ object OrderProcessor {
       _ <- Metrics.startServer(metricsPort)
       breaker <- Resource.eval(CircuitBreaker.create("postgres-write", circuitBreakerConf._1, circuitBreakerConf._2, Logger[IO], Metrics.onCircuitBreakerStateChange("postgres-write")))
       storage = new CircuitBreakerSkuStorage(new DoobieSkuStorage(xa), breaker)
-      _ <- RabbitConsumer.start(storage, Logger[IO], workerCount = workerCount, queueSize = queueSize, summaryEvery = summaryEvery, retryPolicy = retryPolicy, queueDepthPollInterval = dlqPollInterval)
-      _ <- DlqReprocessor.start(storage, Logger[IO], retryPolicy = reprocessorPolicy, dlqDepthPollInterval = dlqPollInterval)
+      handler = new OrderPlacedHandler(storage)
+      _ <- RabbitConsumer.start(handler, Logger[IO], workerCount = workerCount, queueSize = queueSize, summaryEvery = summaryEvery, retryPolicy = retryPolicy, queueDepthPollInterval = dlqPollInterval, snapshotFn = storage.snapshot)
+      _ <- DlqReprocessor.start(handler, Logger[IO], retryPolicy = reprocessorPolicy, dlqDepthPollInterval = dlqPollInterval)
     } yield ()
 
     // Use the resource and keep the app running. IOApp installs a JVM shutdown hook that

@@ -4,16 +4,13 @@ import cats.effect.*
 import cats.effect.std.{Dispatcher, Mutex, Queue}
 import cats.syntax.all.*
 import org.typelevel.log4cats.Logger
-import io.circe.generic.auto._
 import com.rabbitmq.client.{ConnectionFactory, DefaultConsumer, Envelope, AMQP, Channel}
-import com.polyglider.model.OrderPlaced
-import com.polyglider.storage.{SkuStorage, UpsertResult}
-import com.polyglider.consumer.{RabbitConsumer, RetryPolicy}
+import com.polyglider.storage.UpsertResult
+import com.polyglider.consumer.{MessageHandler, RetryPolicy}
 import com.polyglider.consumer.ProcessingFailure
 import com.polyglider.consumer.ProcessingFailure.{PermanentFailure, TransientFailure}
 import com.polyglider.metrics.Metrics
 
-import java.nio.charset.StandardCharsets
 import java.time.Instant
 import scala.concurrent.duration.{DurationLong, FiniteDuration}
 
@@ -79,8 +76,8 @@ object DlqReprocessor {
       case false => requeue *> logger.warn(s"DLQ reprocessor queue full; requeueing tag=${d.deliveryTag}")
     }
 
-  def start(
-    storage: SkuStorage,
+  def start[A](
+    handler: MessageHandler[A],
     logger: Logger[IO],
     retryPolicy: RetryPolicy = defaultRetryPolicy,
     dlqDepthPollInterval: FiniteDuration = 15.seconds
@@ -183,20 +180,20 @@ object DlqReprocessor {
           }
 
           val task = for {
-            parsed <- IO.fromEither(_root_.io.circe.parser.parse(new String(d.body, StandardCharsets.UTF_8)).flatMap(_.as[OrderPlaced]))
-            order  <- IO.fromEither(RabbitConsumer.validateUuids(parsed).flatMap(RabbitConsumer.validateVersion))
-            result <- storage.upsertSku(order.eventId, order.sku, order.quantity)
+            parsed <- IO.fromEither(handler.decode(d.body))
+            order  <- IO.fromEither(handler.validate(parsed))
+            result <- handler.process(order)
             _     <- result match {
               case UpsertResult.Applied =>
-                logger.info(s"[${Instant.now}] DLQ reprocess succeeded for eventId=${order.eventId} sku=${order.sku} after ${reprocessCountOf(d.properties)} prior attempt(s)")
+                logger.info(s"[${Instant.now}] DLQ reprocess succeeded after ${reprocessCountOf(d.properties)} prior attempt(s)")
               case UpsertResult.DuplicateSkipped =>
-                logger.info(s"[${Instant.now}] DLQ reprocess for eventId=${order.eventId} sku=${order.sku} was a duplicate -- skipped (already applied)")
+                logger.info(s"[${Instant.now}] DLQ reprocess was a duplicate -- skipped (already applied)")
             }
             _     <- ack
           } yield ()
 
           task.handleErrorWith { err =>
-            val eventId = RabbitConsumer.eventIdOf(d.body)
+            val eventId = handler.eventIdOf(d.body)
             ProcessingFailure.classify(err) match {
               case PermanentFailure(cause) =>
                 logger.error(cause)(s"[${Instant.now}] DLQ reprocess hit a permanent failure for eventId=$eventId; escalating immediately") *>
