@@ -10,13 +10,12 @@ import io.opentelemetry.sdk.trace.`export`.SimpleSpanProcessor
 import munit.CatsEffectSuite
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import com.polyglider.consumer.RabbitConsumer
+import com.polyglider.consumer.{Delivery, RabbitConsumer}
 
 import scala.concurrent.duration._
 import scala.jdk.CollectionConverters._
 
 class RabbitConsumerSpec extends CatsEffectSuite {
-  type Delivery = RabbitConsumer.Delivery
 
   private given Logger[IO] = Slf4jLogger.getLoggerFromClass[IO](classOf[RabbitConsumerSpec])
 
@@ -24,7 +23,7 @@ class RabbitConsumerSpec extends CatsEffectSuite {
     for {
       nacked <- IO.ref(false)
       queue  <- Queue.bounded[IO, Delivery](10)
-      d       = RabbitConsumer.Delivery(null, 1L, Array.emptyByteArray)
+      d       = Delivery(null,1L, Array.emptyByteArray)
       _      <- RabbitConsumer.handleOrDrop(d, queue, nacked.set(true), summon[Logger[IO]])
       item   <- queue.tryTake
       wasNacked <- nacked.get
@@ -39,8 +38,8 @@ class RabbitConsumerSpec extends CatsEffectSuite {
       nacked <- IO.ref(false)
       queue  <- Queue.bounded[IO, Delivery](1)
       // fill the queue so tryOffer returns false
-      _      <- queue.offer(RabbitConsumer.Delivery(null, 0L, Array.emptyByteArray))
-      d       = RabbitConsumer.Delivery(null, 42L, Array.emptyByteArray)
+      _      <- queue.offer(Delivery(null,0L, Array.emptyByteArray))
+      d       = Delivery(null,42L, Array.emptyByteArray)
       _      <- RabbitConsumer.handleOrDrop(d, queue, nacked.set(true), summon[Logger[IO]])
       wasNacked <- nacked.get
       // the original filler is still in the queue; the dropped message was never enqueued

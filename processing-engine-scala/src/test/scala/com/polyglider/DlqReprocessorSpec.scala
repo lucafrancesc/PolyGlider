@@ -5,10 +5,10 @@ import cats.effect.std.Queue
 import munit.CatsEffectSuite
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import com.polyglider.consumer.Delivery
 import com.polyglider.reprocessor.DlqReprocessor
 
 class DlqReprocessorSpec extends CatsEffectSuite {
-  type Delivery = DlqReprocessor.Delivery
 
   private given Logger[IO] = Slf4jLogger.getLoggerFromClass[IO](classOf[DlqReprocessorSpec])
 
@@ -44,7 +44,7 @@ class DlqReprocessorSpec extends CatsEffectSuite {
     for {
       requeued <- IO.ref(false)
       queue    <- Queue.bounded[IO, Delivery](10)
-      d         = DlqReprocessor.Delivery(null, 1L, Array.emptyByteArray)
+      d         = Delivery(null,1L, Array.emptyByteArray)
       _        <- DlqReprocessor.handleOrRequeue(d, queue, requeued.set(true), summon[Logger[IO]])
       item     <- queue.tryTake
       wasRequeued <- requeued.get
@@ -58,8 +58,8 @@ class DlqReprocessorSpec extends CatsEffectSuite {
     for {
       requeued <- IO.ref(false)
       queue    <- Queue.bounded[IO, Delivery](1)
-      _        <- queue.offer(DlqReprocessor.Delivery(null, 0L, Array.emptyByteArray))
-      d         = DlqReprocessor.Delivery(null, 42L, Array.emptyByteArray)
+      _        <- queue.offer(Delivery(null,0L, Array.emptyByteArray))
+      d         = Delivery(null,42L, Array.emptyByteArray)
       _        <- DlqReprocessor.handleOrRequeue(d, queue, requeued.set(true), summon[Logger[IO]])
       wasRequeued <- requeued.get
       size     <- queue.size

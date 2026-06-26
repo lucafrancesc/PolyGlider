@@ -46,14 +46,6 @@ object RabbitConsumer {
     if (SupportedVersions.contains(order.version)) Right(order)
     else Left(UnsupportedSchemaVersionException(order.version))
 
-  // private[polyglider] so tests in com.polyglider can reference the type
-  private[polyglider] case class Delivery(
-    channel: Channel,
-    deliveryTag: Long,
-    body: Array[Byte],
-    properties: AMQP.BasicProperties = new AMQP.BasicProperties()
-  )
-
   private[polyglider] def retryCountOf(properties: AMQP.BasicProperties): Int =
     Option(properties.getHeaders)
       .flatMap(h => Option(h.get(RetryCountHeader)))
@@ -169,10 +161,10 @@ object RabbitConsumer {
     retryPolicy: RetryPolicy = RetryPolicy.default,
     queueDepthPollInterval: FiniteDuration = 15.seconds,
     snapshotFn: IO[List[SkuStats]] = IO.pure(Nil),
-    mainQueue: String = "orders.placed",
-    mainExchange: String = "orders.exchange",
-    dlxExchange: String = "dlx.orders.exchange",
-    dlxQueue: String = "dlx.orders.placed"
+    mainQueue: String = Topology.MainQueue,
+    mainExchange: String = Topology.MainExchange,
+    dlxExchange: String = Topology.DlxExchange,
+    dlxQueue: String = Topology.DlxQueue
   ): Resource[IO, Unit] =
     for {
       queue      <- Resource.eval(Queue.bounded[IO, Delivery](queueSize))
