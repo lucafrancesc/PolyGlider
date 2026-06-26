@@ -1,6 +1,6 @@
 # ADR-007: Ports and adapters (hexagonal) boundary across the gateway and processing engine
 
-**Status:** Accepted
+**Status:** Implemented
 
 ## Context
 
@@ -26,14 +26,15 @@ The cost of the fusion: message-handling domain logic cannot be unit-tested with
 
 Option 1. Extract the two remaining gaps:
 
-- **Scala** (`MessageHandler` port, tracked in #142): introduce `consumer/MessageHandler.scala` with a trait parameterized over the message type, exposing `decode`, `validate`, `eventIdOf`, and `process`; provide `OrderPlacedHandler` as the concrete `OrderPlaced` implementation backed by `SkuStorage`. Refactor `RabbitConsumer.start` and `DlqReprocessor.start` to accept a `MessageHandler[OrderPlaced]` instead of inlining decode/validate/process logic. Parameterize hardcoded queue and exchange names in `RabbitConsumer.start`.
-- **C#** (`IRabbitMqPublisherAdapter` port, tracked in #143): introduce an interface with a single `PublishAsync` operation; move connection/channel lifecycle, publisher confirms, reconnect-with-backoff, and W3C trace-header injection into `RabbitMqPublisherAdapter`; simplify `RabbitMqPublisherWorker` to the domain concern only (drain channel, serialize, call adapter).
+- **Scala** (`MessageHandler` port): introduced `consumer/MessageHandler.scala` with a trait parameterized over the message type, exposing `decode`, `validate`, `eventIdOf`, and `process`; `OrderPlacedHandler` is the concrete `OrderPlaced` implementation backed by `SkuStorage`. `RabbitConsumer.start` and `DlqReprocessor.start` accept a `MessageHandler[OrderPlaced]` instead of inlining decode/validate/process logic. Queue and exchange names are parameterized in `RabbitConsumer.start`.
+- **C#** (`IRabbitMqPublisherAdapter` port): introduced an interface with a single `PublishAsync` operation; connection/channel lifecycle, publisher confirms, reconnect-with-backoff, and W3C trace-header injection live in `RabbitMqPublisherAdapter`; `RabbitMqPublisherWorker` covers the domain concern only (drain channel, serialize, call adapter).
 
 Both extractions follow the precedent already set by `SkuStorage`/`DoobieSkuStorage` and `IOrderPublisher`/`ChannelOrderPublisher`.
 
 ## Consequences
 
-- **Gained:** domain logic (decode, validate, process) can be unit-tested with a stub storage and no broker — each follow-up ticket (#142, #143) adds a unit test that exercises the extracted code directly, proving the seam is real.
+- **Gained:** domain logic (decode, validate, process) can be unit-tested with a stub storage and no broker — `MessageHandlerSpec` (Scala) and `PublisherWorkerTests` (C#) exercise the extracted code directly, proving the seam is real.
 - **Gained:** in tests and future consumers, the transport adapter can be swapped or mocked without Testcontainers spin-up.
+- **Implemented:** both extractions are complete. `MessageHandler[A]` / `OrderPlacedHandler` live in `processing-engine-scala/src/main/scala/com/polyglider/consumer/`; `IRabbitMqPublisherAdapter` / `RabbitMqPublisherAdapter` live in `gateway-api-cs/Services/`.
 - **No behavior change:** both refactors are purely structural — no new topology, no new entity type, no change to retry, backoff, or publisher-confirms semantics.
 - **Not in scope:** entity-genericity (#84, closed `not_planned`) is explicitly excluded; this ADR documents the pattern without committing to making the pipeline generic over entity types.
