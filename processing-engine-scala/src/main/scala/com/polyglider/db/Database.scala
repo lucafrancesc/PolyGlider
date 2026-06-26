@@ -19,13 +19,17 @@ object Database {
 
   def transactorResource: Resource[IO, HikariTransactor[IO]] = for {
     ec <- ExecutionContexts.fixedThreadPool[IO](conf.getInt("pool-size"))
-    xa <- HikariTransactor.newHikariTransactor[IO](
-      "org.postgresql.Driver",
-      jdbcUrl,
-      conf.getString("user"),
-      conf.getString("password"),
-      ec
-    )
+    xa <- HikariTransactor.initial[IO](ec)
+    _  <- Resource.eval(xa.configure { ds =>
+      IO.delay {
+        ds.setDriverClassName("org.postgresql.Driver")
+        ds.setJdbcUrl(jdbcUrl)
+        ds.setUsername(conf.getString("user"))
+        ds.setPassword(conf.getString("password"))
+        ds.setMaximumPoolSize(conf.getInt("pool-size"))
+        ds.setConnectionTimeout(conf.getLong("connection-timeout-ms"))
+      }
+    })
   } yield xa
 
   def runMigrations(): IO[Unit] = IO.blocking {

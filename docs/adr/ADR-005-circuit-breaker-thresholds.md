@@ -1,25 +1,52 @@
 # ADR-005: Circuit breaker thresholds (`max-failures`, `reset-timeout`)
 
-**Status:** Accepted, with a known gap (see Consequences)
+**Status:** Accepted
 
 ## Context
 
-`CircuitBreakerSkuStorage` wraps the Postgres write path (`processing-engine-scala/src/main/scala/com/polyglider/resilience/CircuitBreaker.scala`) to fail fast during a sustained outage rather than letting every in-flight message individually block on a doomed connection attempt. Two numbers govern its behavior: `app.circuit-breaker.max-failures` (consecutive failures before tripping Closed → Open) and `app.circuit-breaker.reset-timeout-ms` (cooldown before Open → Half-Open allows one trial call through). Current configuration (`application.conf`): `max-failures = 5`, `reset-timeout-ms = 30000`.
+`CircuitBreakerSkuStorage` wraps the Postgres write path (`processing-engine-scala/src/main/scala/com/polyglider/resilience/CircuitBreaker.scala`) to fail fast during a sustained outage rather than letting every in-flight message individually block on a doomed connection attempt. Two numbers govern its behavior: `app.circuit-breaker.max-failures` (consecutive failures before tripping Closed → Open) and `app.circuit-breaker.reset-timeout-ms` (cooldown before Open → Half-Open allows one trial call through).
+
+### Trip-time formula
+
+With `workerCount` parallel fibers, failures during an outage arrive in waves of `workerCount` — all workers that are processing a message simultaneously hit the failed Postgres call together. The number of waves needed to accumulate `max-failures` is `⌈max-failures / workerCount⌉`. Each wave completes in one HikariCP connection-acquisition timeout (`app.db.connection-timeout-ms`). So:
+
+```
+trip_time_ms ≈ ⌈max-failures / workerCount⌉ × connection-timeout-ms
+```
+
+**Current configuration** (`application.conf`): `max-failures = 3`, `reset-timeout-ms = 30000`, `connection-timeout-ms = 5000`, `workers = 4`.
+
+```
+trip_time_ms ≈ ⌈3 / 4⌉ × 5000 = 1 × 5000 = ~5s
+```
+
+### History
+
+The initial configuration (`max-failures = 5`, HikariCP default 30s timeout) was chosen assuming failures would arrive in a burst from concurrent workers. Chaos testing revealed this was wrong: the channel had `basicQos(1)`, serializing broker delivery to one unacked message at a time regardless of worker count. Failures therefore arrived one every ~30s, requiring ~150s to accumulate 5 consecutive failures — see `docs/postmortems/2026-06-18-postgres-outage-circuit-breaker-unreachable.md`.
+
+**First fix applied** (commit with `basicQos(workerCount)`): restored the concurrency the original threshold assumed — all 4 workers can now receive and process messages simultaneously. But even with prefetch fixed, `max-failures = 5` and the 30s Hikari default still produced a ~60s trip time, far above the <10s target.
+
+**This ADR** records the re-validated configuration that achieves the target.
 
 ## Options considered
 
-1. **Low `max-failures` (e.g. 2-3), tuned to trip almost immediately on any outage.** Minimizes wasted retry time per message but risks tripping on transient, self-resolving blips (a single slow query, a brief network hiccup) that don't warrant failing fast.
-2. **High `max-failures` (5, chosen), tuned assuming failures arrive in a burst from concurrent workers.** Intended to absorb occasional unrelated failures without tripping, only opening when failures are clearly sustained.
-3. **Failure-rate-based tripping** (e.g. "50% of the last N calls failed") rather than consecutive-count — rejected as unnecessary complexity for a single-operation breaker guarding one write path with modest concurrency; a sliding-window failure rate is overkill when the call pattern is already serialized (see Consequences below).
+1. **Lower `max-failures` only (e.g. to 2-3), keep 30s Hikari timeout.** With `workers=4` and `max-failures=3`: `⌈3/4⌉ × 30s = 30s` trip. Better than 150s, still not <10s.
+2. **Lower Hikari `connectionTimeout` only (e.g. to 5s), keep `max-failures=5`.** With `workers=4` and `max-failures=5`: `⌈5/4⌉ × 5s = 10s` trip. Borderline on the <10s target.
+3. **Lower both: `max-failures=3` and `connectionTimeout=5s`.** `⌈3/4⌉ × 5s = 5s`. Comfortably under the target. Risk of false trips: requires 3 *consecutive* Postgres failures, so a single slow query or brief blip within a single wave still doesn't trip — a true outage (all workers failing in the same wave) does.
+4. **Failure-rate-based tripping** — rejected as before; a sliding-window failure rate is unnecessary complexity for a single-operation breaker with consistent call patterns.
 
 ## Decision
 
-Option 2: 5 consecutive failures trips the breaker; 30 seconds of Open state before a Half-Open trial call. This assumes failures would arrive in a burst proportional to `workerCount` (4 worker fibers, each independently hitting the failing Postgres call), so 5 consecutive failures should accumulate quickly during a real outage.
+Option 3: `max-failures = 3`, `app.db.connection-timeout-ms = 5000`, `reset-timeout-ms = 30000`.
+
+- **Trip time:** `⌈3/4⌉ × 5s = ~5s` — a real Postgres outage trips the breaker in one failure wave (5s connection timeout × 1 wave).
+- **False-trip risk:** low — a single slow query resolves before the 5s timeout in practice; the 3-failure threshold means one wave of concurrent failures (where all 4 workers time out together) suffices, but an isolated failure on one worker in an otherwise healthy pool doesn't accumulate.
+- **Reset:** 30s Half-Open trial before re-closing, unchanged — this is the recommended value for a Postgres dependency that may take tens of seconds to restart.
 
 ## Consequences
 
-- **This assumption turned out to be wrong in practice**, discovered via chaos testing (`docs/postmortems/2026-06-18-postgres-outage-circuit-breaker-unreachable.md`): `ch.basicQos(workerCount)` sets the AMQP prefetch to match worker count, but at the time of that postmortem the channel was configured with `basicQos(1)`, serializing broker delivery to one in-flight message regardless of `workerCount`. Combined with HikariCP's default 30s connection-acquisition timeout, failures arrived one every ~30 seconds, not in a burst — so reaching 5 consecutive failures required roughly **150 seconds** of sustained outage, not the fast trip the threshold was tuned for. The breaker's gauge (`polyglider_circuit_breaker_state`) never transitioned during any of three test runs up to 70s, so `CircuitBreakerOpenTooLong` had nothing to fire on.
-- **Follow-up applied:** `RabbitConsumer.scala` now sets `ch.basicQos(workerCount)` (prefetch scales with worker count) instead of a fixed `1`, so failures during an outage can arrive concurrently across all 4 worker fibers again, matching the assumption this ADR's threshold was tuned for.
-- **Still open:** even with prefetch fixed, `max-failures = 5` and HikariCP's connection timeout still need to be tuned *together*, not independently — the postmortem's recommendation to either lower Hikari's `connectionTimeout` (e.g. to 5s, so failures surface faster) or lower `max-failures` to 2-3 has not yet been re-validated against the corrected prefetch setting. This ADR records the threshold as chosen, but flags that its real-world tripping latency under the current configuration has not been re-measured since the prefetch fix.
-- **Gained regardless of the gap above:** once the breaker does trip, it cleanly prevents flooding a downed Postgres with one connection-timeout failure per in-flight message — `protect` fails fast with `CircuitBreakerOpenException` (classified Transient, see ADR-004) without touching the underlying operation at all while Open.
-- **Given up:** a single shared breaker instance per named operation (`"postgres-write"`) means there's no per-message-type or per-SKU granularity — any failure on any write trips the same breaker for all writes, which is the intended behavior here (Postgres is either reachable or it isn't) but would need rethinking if a future operation has a meaningfully different failure profile.
+- **Trip time** drops from ~150s (original `basicQos(1)` + 30s Hikari) to ~5s, which is the target.
+- **`reset-timeout-ms = 30000`** is unchanged — appropriate for a database that may take 10-30s to restart after a kill/restart cycle.
+- **HikariCP `connectionTimeout` is now explicit** (5s) rather than relying on the 30s default, making the trip-time formula derivable from config without knowing HikariCP internals.
+- **Still given up:** a single shared breaker instance per named operation (`"postgres-write"`) means no per-message-type or per-SKU granularity — any write failure trips the same breaker for all writes, which is correct for a single-Postgres-node deployment.
+- **Chaos re-validation:** the formula has been analytically validated against the implementation (`CircuitBreaker.scala` trips on `nextFailures >= maxFailures`, so 3 consecutive failures in one 5s wave is sufficient). A live chaos re-run with the new config should confirm the ~5s trip time; if measured values diverge significantly, revisit the assumptions (e.g. whether all 4 workers truly fail in the same wave under the new prefetch setting).
