@@ -23,8 +23,9 @@ builder.Services.AddSingleton(Channel.CreateBounded<OrderPlacedEvent>(new Bounde
     FullMode = BoundedChannelFullMode.DropWrite
 }));
 builder.Services.AddSingleton<IOrderPublisher, ChannelOrderPublisher>();
-builder.Services.AddHostedService<RabbitMqPublisherWorker>();
 builder.Services.AddSingleton<RabbitMqConnectionStatus>();
+builder.Services.AddSingleton<IRabbitMqPublisherAdapter, RabbitMqPublisherAdapter>();
+builder.Services.AddHostedService<RabbitMqPublisherWorker>();
 builder.Services.AddSingleton<IRabbitMqConnectionStatus>(sp => sp.GetRequiredService<RabbitMqConnectionStatus>());
 builder.Services.AddHealthChecks().AddCheck<RabbitMqHealthCheck>("rabbitmq");
 
