@@ -56,8 +56,8 @@ class RabbitConsumerSpec extends CatsEffectSuite {
     val before = Metrics.consumerQueueOverflows.labels().get()
     for {
       queue <- Queue.bounded[IO, Delivery](1)
-      _     <- queue.offer(RabbitConsumer.Delivery(null, 0L, Array.emptyByteArray))
-      d      = RabbitConsumer.Delivery(null, 99L, Array.emptyByteArray)
+      _     <- queue.offer(Delivery(null, 0L, Array.emptyByteArray))
+      d      = Delivery(null, 99L, Array.emptyByteArray)
       _     <- RabbitConsumer.handleOrDrop(d, queue, IO.unit, summon[Logger[IO]])
     } yield {
       val after = Metrics.consumerQueueOverflows.labels().get()
