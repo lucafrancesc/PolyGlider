@@ -16,6 +16,8 @@ public class PublisherWorkerTests
     {
         public List<(byte[] Body, string? TraceParent, string? TraceState)> Published { get; } = [];
 
+        public Task EnsureConnectedAsync(CancellationToken ct) => Task.CompletedTask;
+
         public Task PublishAsync(byte[] body, string? traceParent, string? traceState, CancellationToken ct)
         {
             Published.Add((body, traceParent, traceState));
@@ -96,6 +98,8 @@ public class PublisherWorkerTests
     private sealed class FaultyOnFirstAdapter(Action onFirstAttempt, Action onSuccess) : IRabbitMqPublisherAdapter
     {
         private bool _firstAttemptDone;
+
+        public Task EnsureConnectedAsync(CancellationToken ct) => Task.CompletedTask;
 
         public Task PublishAsync(byte[] body, string? traceParent, string? traceState, CancellationToken ct)
         {
