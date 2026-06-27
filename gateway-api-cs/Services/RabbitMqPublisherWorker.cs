@@ -11,6 +11,11 @@ public class RabbitMqPublisherWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Eagerly connect so the health check can report the real connection state before the
+        // first publish arrives. Without this the health check stays "unreachable" forever
+        // because the adapter only connects lazily inside PublishAsync.
+        await adapter.EnsureConnectedAsync(stoppingToken);
+
         // Deliberately CancellationToken.None, not stoppingToken: StopAsync marks the channel
         // writer complete instead of cancelling this token, so ReadAllAsync drains whatever was
         // already buffered and ends normally once empty, rather than throwing immediately and

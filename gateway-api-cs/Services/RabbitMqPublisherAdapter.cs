@@ -22,7 +22,7 @@ public class RabbitMqPublisherAdapter(
     public async Task PublishAsync(byte[] body, string? traceParent, string? traceState, CancellationToken ct)
     {
         if (!_connected)
-            await ConnectAsync(ct);
+            await EnsureConnectedAsync(ct);
 
         // Re-parent onto the original HTTP request's trace (captured at enqueue time, see
         // Program.cs) rather than this adapter's own ambient context, so the gateway's publish
@@ -57,7 +57,7 @@ public class RabbitMqPublisherAdapter(
         }
     }
 
-    private async Task ConnectAsync(CancellationToken ct)
+    public async Task EnsureConnectedAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
